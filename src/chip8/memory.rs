@@ -1,5 +1,8 @@
+use std::io::{BufRead, BufReader};
+use std::fs::File;
+
 pub struct Memory {
-    pub(in crate::chip8) memory: [u8; 1024 * 4] // add pub(in chip8)
+    memory: [u8; 1024 * 4]
 }
 
 impl Memory {
@@ -110,13 +113,56 @@ impl Memory {
         }
     }
 
-    pub fn set_mem(&mut self, addr: u16, data: u8) {
-        if addr <= 0x4f {
-            panic!("Can't access memory addresses 0x00 - 0x4f");
-        }
-        if addr >= 1024 * 4 {
-            panic!("Out of memory bounds - memory consists of 4096 bytes");
+    pub fn get_byte(&self, addr: u16) -> u8 {
+        self.memory[addr as usize]
+    }
+
+    pub fn get_2bytes(&self, addr: u16) -> u16 {
+        ((self.get_byte(addr) as u16) << 8)  | self.get_byte(addr + 1) as u16
+    }
+
+    pub fn write_byte(&mut self, addr: u16, data: u8) {
+        if addr < 0x200 {
+            panic!("Can't write to memory addresses 0x00 - 0x200");
         }
         self.memory[addr as usize] = data;
+    }
+
+    pub fn write_2bytes(&mut self, addr: u16, data: u16) {
+        self.write_byte(addr, (data >> 8) as u8);
+        self.write_byte(addr + 1, (data & 0xff) as u8);
+    }
+
+    pub fn from(file_path: &str) -> Result<Self, std::io::Error> {
+        let file = File::open(file_path)?;
+        let reader = BufReader::new(file);
+        let mut memory = Self::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            let mut split = line.split_whitespace();
+
+            let addr = split.next().ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Missing address in file"
+            ))?;
+            let data = split.next().ok_or_else(|| std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Missing data in file"
+            ))?;
+
+            let addr = u16::from_str_radix(addr.trim_start_matches("0x"), 16).map_err(|e| {
+                println!("Failed to parse address: {}", addr); // Debug print
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+            })?;
+            let data = u8::from_str_radix(data.trim_start_matches("0x"), 16).map_err(|e| {
+                println!("Failed to parse data: {}", data); // Debug print
+                std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+            })?;
+
+            memory.write_byte(addr, data);
+        }
+
+        Ok(memory)
     }
 }
