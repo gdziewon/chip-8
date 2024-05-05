@@ -1,10 +1,15 @@
-mod chip8;
+use chip8::{Chip8, Memory};
+use std::process;
+use std::env;
 
 fn main() {
-    let mut chip8 = chip8::Chip8::new();
-    let mut mem = match chip8::memory::Memory::from(r"C:\Users\Erykoo\Documents\rust_projects\chip8\src\mem.txt") {
-        Ok(mem) => mem,
-        Err(e) => panic!("Error creating memory {}", e)
-    };
+    let mut chip8 = Chip8::new();
+        
+    let mut mem = Memory::build(env::args()).unwrap_or_else(|err| {
+        eprintln!("Error while creating memory: {err}");
+        process::exit(1);
+    });
+    
     chip8.run(&mut mem);
 }
+ 

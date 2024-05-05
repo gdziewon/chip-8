@@ -1,12 +1,12 @@
 mod display;
 pub mod memory;
 
+pub use memory::Memory;
+
 use rand::Rng;
 use minifb::{Key, KeyRepeat, Window};
 use bimap::BiMap;
 use lazy_static::lazy_static;
-
-use self::memory::Memory;
 
 pub const DISPLAY_WIDTH: usize = 64;
 pub const DISPLAY_HEIGHT: usize = 32;
@@ -71,6 +71,46 @@ pub fn new() -> Self {
         sp: 0x00,
         stack: [0x0000; STACK_DEPTH],
         display: [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH]
+    }
+}
+
+fn execute( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) {
+    match op_code >> 12 {
+        0x0 => self.execute_0nnn(op_code),
+        0x1 => self.execute_1nnn(op_code),
+        0x2 => self.execute_2nnn(op_code),
+        0x3 => self.execute_3xkk(op_code),
+        0x4 => self.execute_4xkk(op_code),
+        0x5 => self.execute_5xy0(op_code),
+        0x6 => self.execute_6xkk(op_code),
+        0x7 => self.execute_7xkk(op_code),
+        0x8 => self.execute_8nnn(op_code),
+        0x9 => self.execute_9xy0(op_code),
+        0xA => self.execute_annn(op_code),
+        0xB => self.execute_bnnn(op_code),
+        0xC => self.execute_cxkk(op_code),
+        0xD => self.execute_dxyn(op_code, &mem),
+        0xE => self.execute_ennn(op_code, &window),
+        0xF => self.execute_fnnn(op_code, mem, window),
+        _ => ()
+    }
+}
+
+pub fn run( &mut self, mem: &mut Memory ) {
+
+    let mut display_ctl = display::Display::new();
+
+    while display_ctl.window.is_open() {
+        display_ctl.update(&self.display);
+
+        let instruction: u16 = mem.get_2bytes(self.pc);
+        if instruction == 0x0fff { // HALT
+            return;
+        }
+
+        self.execute(instruction, mem, &mut display_ctl.window);
+
+        std::thread::sleep(std::time::Duration::from_millis(MS_DELAY)); // delay
     }
 }
 
@@ -205,18 +245,18 @@ fn execute_9xy0( &mut self, op_code: u16) { // 9xy0 SNE Vx, Vy
     self.pc += 2;
 }
 
-fn execute_Annn( &mut self, op_code: u16) { // Annn - LD I, addr
+fn execute_annn( &mut self, op_code: u16) { // Annn - LD I, addr
     let addr = Chip8::get_addr(op_code);
     self.idx = addr;
     self.pc += 2;
 }
 
-fn execute_Bnnn( &mut self, op_code: u16) { // Bnnn - JP V0, addr
+fn execute_bnnn( &mut self, op_code: u16) { // Bnnn - JP V0, addr
     let addr = Chip8::get_addr(op_code);
     self.pc = addr + self.v[0] as u16;
 }
 
-fn execute_Cxkk( &mut self, op_code: u16) { // Cxkk - RND Vx, byte
+fn execute_cxkk( &mut self, op_code: u16) { // Cxkk - RND Vx, byte
     let vx = Chip8::get_vx(op_code);
     let data = Chip8::get_data_byte(op_code);
     let rnd: u8 = rand::thread_rng().gen();
@@ -224,7 +264,7 @@ fn execute_Cxkk( &mut self, op_code: u16) { // Cxkk - RND Vx, byte
     self.pc += 2;
 }
 
-fn execute_Dxyn( &mut self, op_code: u16, mem: &Memory) { // Dxyn - DRW Vx, Vy, nibble
+fn execute_dxyn( &mut self, op_code: u16, mem: &Memory) { // Dxyn - DRW Vx, Vy, nibble
     let vx = Chip8::get_vx(op_code) as usize;
     let vy = Chip8::get_vy(op_code) as usize;
     let height = op_code & 0xF;
@@ -250,7 +290,7 @@ fn execute_Dxyn( &mut self, op_code: u16, mem: &Memory) { // Dxyn - DRW Vx, Vy, 
     self.pc += 2;
 }
 
-fn execute_Ennn( &mut self, op_code: u16, window: &Window) { // Starts with E
+fn execute_ennn( &mut self, op_code: u16, window: &Window) { // Starts with E
     let vx = Chip8::get_vx(op_code);
     if let Some(key) = KEYS.get_by_left(&self.v[vx]) {
         match op_code & 0x00ff {
@@ -270,7 +310,7 @@ fn execute_Ennn( &mut self, op_code: u16, window: &Window) { // Starts with E
     self.pc += 2;
 }
 
-fn execute_Fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) { // Starts with F
+fn execute_fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) { // Starts with F
     let vx = Chip8::get_vx(op_code);
     match op_code & 0x00ff {
         0x07 => { // Fx07 - LD Vx, DT
@@ -334,46 +374,6 @@ fn execute_Fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window)
         _ => ()
     }
     self.pc += 2;
-}
-
-fn execute( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) {
-    match op_code >> 12 {
-        0x0 => self.execute_0nnn(op_code),
-        0x1 => self.execute_1nnn(op_code),
-        0x2 => self.execute_2nnn(op_code),
-        0x3 => self.execute_3xkk(op_code),
-        0x4 => self.execute_4xkk(op_code),
-        0x5 => self.execute_5xy0(op_code),
-        0x6 => self.execute_6xkk(op_code),
-        0x7 => self.execute_7xkk(op_code),
-        0x8 => self.execute_8nnn(op_code),
-        0x9 => self.execute_9xy0(op_code),
-        0xA => self.execute_Annn(op_code),
-        0xB => self.execute_Bnnn(op_code),
-        0xC => self.execute_Cxkk(op_code),
-        0xD => self.execute_Dxyn(op_code, &mem),
-        0xE => self.execute_Ennn(op_code, &window),
-        0xF => self.execute(op_code, mem, window),
-        _ => ()
-    }
-}
-
-pub fn run( &mut self, mem: &mut Memory ) {
-
-    let mut display_ctl = display::Display::new();
-
-    while display_ctl.window.is_open() {
-        display_ctl.update(&self.display);
-
-        let instruction: u16 = mem.get_2bytes(self.pc);
-        if instruction == 0x0fff { // HALT
-            return;
-        }
-
-        self.execute(instruction, mem, &mut display_ctl.window);
-
-        std::thread::sleep(std::time::Duration::from_millis(MS_DELAY)); // delay
-    }
 }
 
 fn get_vx(op_code: u16) -> usize{

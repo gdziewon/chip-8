@@ -1,5 +1,5 @@
 use minifb::{Window, WindowOptions};
-use crate::chip8::{DISPLAY_HEIGHT, DISPLAY_WIDTH, SCALE};
+use super::{DISPLAY_HEIGHT, DISPLAY_WIDTH, SCALE};
 
 pub struct Display {
     pub window: Window,

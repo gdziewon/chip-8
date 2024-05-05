@@ -1,5 +1,5 @@
 pub(super)
-fn set_character_sprites(memory: &mut [u8; 1024 * 4]) {
+fn set_character_sprites(memory: &mut [u8]) {
     // "0"
     memory[0x00] = 0xf0;
     memory[0x01] = 0x90;
