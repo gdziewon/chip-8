@@ -1,10 +1,10 @@
 mod sprites;
 
-use std::io::{BufRead, BufReader};
-use std::fs::File;
-use anyhow::{Result, anyhow};
+use std::fs;
+use anyhow::{Result, Context, anyhow};
+use super::{MEMORY_SIZE, PROGRAM_START};
 
-const MEMORY_SIZE: usize = 1024 * 4;
+const AVAILABLE_MEMORY: usize = MEMORY_SIZE - PROGRAM_START as usize;
 
 pub struct Memory {
     memory: [u8; MEMORY_SIZE]
@@ -14,52 +14,49 @@ impl Memory {
     pub fn new() -> Self {
         let mut memory = [0; MEMORY_SIZE];
 
-        sprites::set_character_sprites(&mut memory);
+        sprites::set_sprites(&mut memory);
 
         Memory { memory }
     }
 
+    // TODO: Make them return Result
     pub fn get_byte(&self, addr: u16) -> u8 {
         self.memory[addr as usize]
     }
 
-    pub fn get_2bytes(&self, addr: u16) -> u16 {
+    pub fn get_instruction(&self, addr: u16) -> u16 {
         ((self.get_byte(addr) as u16) << 8)  | self.get_byte(addr + 1) as u16
     }
 
-    pub fn write_byte(&mut self, addr: u16, data: u8) {
-        self.memory[addr as usize] = data;
-    }
-
-    pub fn write_2bytes(&mut self, addr: u16, data: u16) {
-        self.write_byte(addr, (data >> 8) as u8);
-        self.write_byte(addr + 1, (data & 0xff) as u8);
-    }
-
     pub fn write_entry(&mut self, entry: MemoryEntry) {
-        self.write_byte(entry.address, entry.data);
+        self.memory[entry.address as usize] = entry.data;
     }
+    
 
     pub fn build(mut args: impl Iterator<Item = String>) -> Result<Self> {
-        args.next();
-
-        match args.next() {
-            Some(file_path) => Memory::from(&file_path),
-            None => Err(anyhow!("File for memory not specified")),
+        match (args.next(), args.next()) {
+            (Some(_), Some(file_path)) => {
+                let contents = fs::read_to_string(&file_path)
+                    .with_context(|| format!("Failed to read file: {}", file_path))?;
+                Memory::from(&contents)
+            },
+            _ => Err(anyhow!("Expected a file path as the second argument")),
         }
     }
 
-    pub fn from(file_path: &str) -> Result<Self> {
-        let file = File::open(file_path)?;
-        let reader = BufReader::new(file);
+    pub fn from(contents: &str) -> Result<Self> {
+        let lines: Vec<_> = contents.lines().collect();
+        if lines.len() > AVAILABLE_MEMORY {
+            return Err(anyhow!("File has too many lines: {}. Maximum memory available for a program is {}.", lines.len(), AVAILABLE_MEMORY));
+        }
+    
         let mut memory = Self::new();
-
-        for (i, line) in reader.lines().enumerate() {
-            let line = line?;
-            let entry = MemoryEntry::from_line(&line, i + 1)?;
+        
+        for (i, line) in lines.iter().enumerate() {
+            let entry = MemoryEntry::from_line(line, i + 1)?;
             memory.write_entry(entry);
         }
-
+    
         Ok(memory)
     }
 }
@@ -70,16 +67,28 @@ pub struct MemoryEntry {
 }
 
 impl MemoryEntry {
+    pub fn new(address: u16, data: u8) -> Result<Self> {
+        match address {
+            addr if addr >= MEMORY_SIZE as u16 => Err(anyhow!("Address too high: {}, memory size is {}", addr, MEMORY_SIZE)),
+            addr if addr < PROGRAM_START => Err(anyhow!("Address too low: {}, program starts at {}", addr, PROGRAM_START)),
+            _ => Ok(MemoryEntry { address, data }),
+        }
+    }
+
     fn from_line(line: &str, line_number: usize) -> Result<Self> {
         let mut parts = line.split_whitespace();
-        let addr_str = parts.next().ok_or_else(|| anyhow!("Missing address in line {}", line_number))?;
-        let data_str = parts.next().ok_or_else(|| anyhow!("Missing data in line {}", line_number))?;
-
-        let address = u16::from_str_radix(addr_str.trim_start_matches("0x"), 16)
-            .map_err(|e| anyhow!("Invalid address at line {}: {}", line_number, e))?;
-        let data = u8::from_str_radix(data_str.trim_start_matches("0x"), 16)
-            .map_err(|e| anyhow!("Invalid data at line {}: {}", line_number, e))?;
-
-        Ok(MemoryEntry { address, data })
+        
+        let address = parts.next()
+            .ok_or_else(|| anyhow!("Missing address in line {}", line_number))
+            .and_then(|addr| u16::from_str_radix(addr.strip_prefix("0x").unwrap_or(addr), 16)
+                .map_err(|_| anyhow!("Invalid address at line {}: {}", line_number, addr)))?;
+        
+        let data = parts.next()
+            .ok_or_else(|| anyhow!("Missing data in line {}", line_number))
+            .and_then(|data| u8::from_str_radix(data.strip_prefix("0x").unwrap_or(data), 16)
+                .map_err(|_| anyhow!("Invalid data at line {}: {}", line_number, data)))?;
+        
+        MemoryEntry::new(address, data).map_err(|err| anyhow!("Error at line {}: {}", line_number, err))
     }
+    
 }

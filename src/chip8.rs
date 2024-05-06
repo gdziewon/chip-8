@@ -1,16 +1,20 @@
 mod display;
 pub mod memory;
 
-pub use memory::Memory;
+pub use memory::{Memory, MemoryEntry};
 
 use rand::Rng;
 use minifb::{Key, KeyRepeat, Window};
 use bimap::BiMap;
 use lazy_static::lazy_static;
+use std::{thread, time::Duration};
 
 pub const DISPLAY_WIDTH: usize = 64;
 pub const DISPLAY_HEIGHT: usize = 32;
 pub const SCALE: usize = 15;
+
+pub const MEMORY_SIZE: usize = 1024 * 4;
+pub const PROGRAM_START: u16 = 0x200;
 
 const MS_DELAY: u64 = 100;
 
@@ -67,7 +71,7 @@ pub fn new() -> Self {
         idx: 0x0000,
         dt: 0x00,
         st: 0x00,
-        pc: 0x200, // set PC to 0x200
+        pc: PROGRAM_START, // set PC to 0x200
         sp: 0x00,
         stack: [0x0000; STACK_DEPTH],
         display: [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH]
@@ -103,14 +107,14 @@ pub fn run( &mut self, mem: &mut Memory ) {
     while display_ctl.window.is_open() {
         display_ctl.update(&self.display);
 
-        let instruction: u16 = mem.get_2bytes(self.pc);
+        let instruction: u16 = mem.get_instruction(self.pc);
         if instruction == 0x0fff { // HALT
             return;
         }
 
         self.execute(instruction, mem, &mut display_ctl.window);
 
-        std::thread::sleep(std::time::Duration::from_millis(MS_DELAY)); // delay
+        thread::sleep(Duration::from_millis(MS_DELAY)); // delay
     }
 }
 
@@ -330,7 +334,7 @@ fn execute_fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window)
 
                 // Keep window responsive
                 window.update();
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                thread::sleep(Duration::from_millis(5));
             }
         }
 
@@ -351,17 +355,16 @@ fn execute_fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window)
         }
 
         0x33 => { // Fx33 - LD B, Vx
-            mem.write_byte(self.idx, self.v[vx] / 100);
-            mem.write_byte(self.idx + 1, (self.v[vx] % 100) / 10);
-            mem.write_byte(self.idx + 2, self.v[vx] % 10);
+            mem.write_entry(MemoryEntry::new(self.idx, self.v[vx] / 100).unwrap());
+            mem.write_entry(MemoryEntry::new(self.idx + 1, (self.v[vx] % 100) / 10).unwrap());
+            mem.write_entry(MemoryEntry::new(self.idx + 2, self.v[vx] % 10).unwrap());
         }
 
         0x55 => { // Fx55 - LD [I], Vx
             for i in 0..vx {
-                mem.write_byte(self.idx, self.v[i]);
-                self.idx += 1;
+                mem.write_entry(MemoryEntry::new(self.idx + i as u16, self.v[i]).unwrap());
             }
-            self.idx += 1;
+            self.idx += vx as u16 + 1;
         }
 
         0x65 => { // Fx65 - LD Vx, [I]
