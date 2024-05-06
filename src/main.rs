@@ -10,6 +10,9 @@ fn main() {
         process::exit(1);
     });
     
-    chip8.run(&mut mem);
+    if let Err(e) = chip8.run(&mut mem) {
+        eprintln!("Error while running chip8: {e}");
+        process::exit(1);
+    }
 }
  

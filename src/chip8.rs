@@ -1,13 +1,17 @@
 mod display;
 pub mod memory;
+pub mod errors;
 
-pub use memory::{Memory, MemoryEntry};
+pub use memory::{Memory, MemoryEntry, MemoryAddress};
+use errors::Chip8Error;
+use display::Display;
 
 use rand::Rng;
 use minifb::{Key, KeyRepeat, Window};
 use bimap::BiMap;
 use lazy_static::lazy_static;
-use std::{thread, time::Duration};
+use rodio::{OutputStream, Sink, source::{SineWave, Source}};
+use std::{cmp::Ordering, thread, time::Duration, sync::{Arc, Mutex}};
 
 pub const DISPLAY_WIDTH: usize = 64;
 pub const DISPLAY_HEIGHT: usize = 32;
@@ -19,7 +23,11 @@ pub const PROGRAM_START: u16 = 0x200;
 const MS_DELAY: u64 = 100;
 
 const NUM_REGISTERS: usize = 8;
+const FLAG_REGISTER: usize = 7;
 const STACK_DEPTH: usize = 16;
+
+const SINEWAVE_FREQUENCY: f32 = 440.0;
+const TIMERS_FREQUENCY: u64 = 1000 / 60;
 
 lazy_static! {
     // TODO: Change bindings
@@ -52,8 +60,8 @@ v: [u8; NUM_REGISTERS], // 8 general purpose 8-bit registers
 idx: u16, // 16-bit address register
 
 // Timers  - count down at 60hz to 0
-dt: u8, // delay timer
-st: u8, // sound timer
+dt: Arc<Mutex<u8>>, // delay timer
+st: Arc<Mutex<u8>>, // sound timer
 
 pc: u16, // program counter
 sp: u8, // stack pointer
@@ -69,56 +77,90 @@ pub fn new() -> Self {
     Chip8 {
         v: [0x00; NUM_REGISTERS],
         idx: 0x0000,
-        dt: 0x00,
-        st: 0x00,
-        pc: PROGRAM_START, // set PC to 0x200
+        dt: Arc::new(Mutex::new(0)),
+        st: Arc::new(Mutex::new(0)),
+        pc: PROGRAM_START,
         sp: 0x00,
         stack: [0x0000; STACK_DEPTH],
         display: [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH]
     }
 }
 
-fn execute( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) {
-    match op_code >> 12 {
-        0x0 => self.execute_0nnn(op_code),
-        0x1 => self.execute_1nnn(op_code),
-        0x2 => self.execute_2nnn(op_code),
-        0x3 => self.execute_3xkk(op_code),
-        0x4 => self.execute_4xkk(op_code),
-        0x5 => self.execute_5xy0(op_code),
-        0x6 => self.execute_6xkk(op_code),
-        0x7 => self.execute_7xkk(op_code),
-        0x8 => self.execute_8nnn(op_code),
-        0x9 => self.execute_9xy0(op_code),
-        0xA => self.execute_annn(op_code),
-        0xB => self.execute_bnnn(op_code),
-        0xC => self.execute_cxkk(op_code),
-        0xD => self.execute_dxyn(op_code, &mem),
-        0xE => self.execute_ennn(op_code, &window),
-        0xF => self.execute_fnnn(op_code, mem, window),
-        _ => ()
+fn execute( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> {
+    let op_type = OpCodeType::from_u16(op_code)?;
+    match op_type {
+        OpCodeType::Zero => self.execute_0nnn(op_code)?,
+        OpCodeType::One => self.execute_1nnn(op_code),
+        OpCodeType::Two => self.execute_2nnn(op_code),
+        OpCodeType::Three => self.execute_3xkk(op_code)?,
+        OpCodeType::Four => self.execute_4xkk(op_code)?,
+        OpCodeType::Five => self.execute_5xy0(op_code)?,
+        OpCodeType::Six => self.execute_6xkk(op_code)?,
+        OpCodeType::Seven => self.execute_7xkk(op_code)?,
+        OpCodeType::Eight => self.execute_8nnn(op_code)?,
+        OpCodeType::Nine => self.execute_9xy0(op_code)?,
+        OpCodeType::A => self.execute_annn(op_code),
+        OpCodeType::B => self.execute_bnnn(op_code),
+        OpCodeType::C => self.execute_cxkk(op_code)?,
+        OpCodeType::D => self.execute_dxyn(op_code, &mem)?,
+        OpCodeType::E => self.execute_ennn(op_code, &window)?,
+        OpCodeType::F => self.execute_fnnn(op_code, mem, window)?,
     }
+    Ok(())
 }
 
-pub fn run( &mut self, mem: &mut Memory ) {
-
-    let mut display_ctl = display::Display::new();
+pub fn run( &mut self, mem: &mut Memory ) -> Result<(), Chip8Error> {
+    self.run_timers();
+    let mut display_ctl = Display::new()?;
 
     while display_ctl.window.is_open() {
-        display_ctl.update(&self.display);
+        display_ctl.update(&self.display)?;
 
-        let instruction: u16 = mem.get_instruction(self.pc);
+        let instruction: u16 = mem.get_instruction(self.pc)?;
         if instruction == 0x0fff { // HALT
-            return;
+            return Ok(());
         }
 
-        self.execute(instruction, mem, &mut display_ctl.window);
+        self.execute(instruction, mem, &mut display_ctl.window)?;
 
         thread::sleep(Duration::from_millis(MS_DELAY)); // delay
     }
+    Ok(())
 }
 
-fn execute_0nnn( &mut self, op_code: u16) {
+fn run_timers(&self) {
+    let dt = self.dt.clone();
+    let st = self.st.clone();
+
+    thread::spawn(move || {
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let sink = Sink::try_new(&stream_handle).unwrap();
+
+        let source = SineWave::new(SINEWAVE_FREQUENCY).repeat_infinite();
+        sink.append(source);
+        sink.pause();
+
+        loop {
+            thread::sleep(Duration::from_millis(TIMERS_FREQUENCY));
+
+            let mut sound_timer = st.lock().unwrap();
+            let mut delay_timer = dt.lock().unwrap();
+
+            if *sound_timer > 0 {
+                sink.play();
+                *sound_timer -= 1;
+            } else {
+                sink.pause();
+            }
+
+            if *delay_timer > 0 {
+                *delay_timer -= 1;
+            }
+        }
+    });
+}
+
+fn execute_0nnn( &mut self, op_code: u16) -> Result<(), Chip8Error>{
     match op_code {
         0x00ee => { // 00EE - RET
             self.pc = self.stack[self.sp as usize];
@@ -128,9 +170,11 @@ fn execute_0nnn( &mut self, op_code: u16) {
         0x00e0 => { // 00E0 - CLS
             self.display = [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH];
         }
-        _ => () // NOP
+        0x0000 => (), // NOP
+        _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
     }
     self.pc += 2;
+    Ok(())
 }
 
 fn execute_1nnn( &mut self, op_code: u16) { // 1nnn - JP addr
@@ -145,52 +189,53 @@ fn execute_2nnn( &mut self, op_code: u16) { // 2nnn - CALL addr
     self.pc = addr;
 }
 
-fn execute_3xkk( &mut self, op_code: u16) { // 3xkk - SE Vx, byte
-    let vx = Chip8::get_vx(op_code);
+fn execute_3xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 3xkk - SE Vx, byte
+    let vx = Chip8::get_vx(op_code)?;
     let data = Chip8::get_data_byte(op_code);
-    if self.v[vx] == data {
-        self.pc += 2;
-    }
-    self.pc += 2;
+
+    self.pc += if self.v[vx] == data { 4 } else { 2 };
+    Ok(())
 }
 
-fn execute_4xkk( &mut self, op_code: u16) { // 4xkk - SNE Vx, byte
-    let vx = Chip8::get_vx(op_code);
+fn execute_4xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 4xkk - SNE Vx, byte
+    let vx = Chip8::get_vx(op_code)?;
     let data = Chip8::get_data_byte(op_code);
-    if self.v[vx] != data {
-        self.pc += 2;
-    }
-    self.pc += 2;
+
+    self.pc += if self.v[vx] != data { 4 } else { 2 };
+    Ok(())
 }
 
-fn execute_5xy0( &mut self, op_code: u16) { // 5xy0 - SE Vx, Vy
-    if op_code & 0xf == 0 { 
-        let vx = Chip8::get_vx(op_code);
-        let vy = Chip8::get_vy(op_code);
-        if self.v[vx] == self.v[vy] {
-            self.pc += 2;
+fn execute_5xy0( &mut self, op_code: u16) -> Result<(), Chip8Error>{ 
+    match op_code & 0xf { // 5xy0 - SE Vx, Vy
+        0x0 => {
+            let vx = Chip8::get_vx(op_code)?;
+            let vy = Chip8::get_vy(op_code)?;
+            self.pc += if self.v[vx] == self.v[vy] { 4 } else { 2 };
+            Ok(())
         }
+        _ => Err(Chip8Error::UnrecognizedOpcode(op_code)),
     }
-    self.pc += 2;
 }
 
-fn execute_6xkk( &mut self, op_code: u16) { // 6xkk - LD Vx, byte
-    let vx = Chip8::get_vx(op_code);
+fn execute_6xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 6xkk - LD Vx, byte
+    let vx = Chip8::get_vx(op_code)?;
     let data = Chip8::get_data_byte(op_code);
     self.v[vx] = data;
     self.pc += 2;
+    Ok(())
 }
 
-fn execute_7xkk( &mut self, op_code: u16) { // 7xkk - ADD Vx, byte
-    let vx = Chip8::get_vx(op_code);
+fn execute_7xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 7xkk - ADD Vx, byte
+    let vx = Chip8::get_vx(op_code)?;
     let data = Chip8::get_data_byte(op_code);
     self.v[vx] = self.v[vx].wrapping_add(data);
     self.pc += 2;
+    Ok(())
 }
 
-fn execute_8nnn( &mut self, op_code: u16) { // Start with 8
-    let vx = Chip8::get_vx(op_code);
-    let vy = Chip8::get_vy(op_code);
+fn execute_8nnn( &mut self, op_code: u16) -> Result<(), Chip8Error> { // Start with 8
+    let vx = Chip8::get_vx(op_code)?;
+    let vy = Chip8::get_vy(op_code)?;
     match op_code & 0xf {
 
         0x0 => { // 8xy0 - LD Vx, Vy
@@ -210,43 +255,45 @@ fn execute_8nnn( &mut self, op_code: u16) { // Start with 8
         }
         
         0x4 => { // 8xy4 - ADD Vx, Vy
-            self.v[7] = if self.v[vx] as u16 + self.v[vy] as u16 > 0xff { 1 } else { 0 };
+            self.v[FLAG_REGISTER] = if self.v[vx] as u16 + self.v[vy] as u16 > 0xff { 1 } else { 0 };
             self.v[vx] = self.v[vx].wrapping_add(self.v[vy]);
         }
 
         0x5 => { // 8xy5 - SUB Vx, Vy
-            self.v[7] = if self.v[vx] >= self.v[vy] { 1 } else { 0 };
+            self.v[FLAG_REGISTER] = if self.v[vx] >= self.v[vy] { 1 } else { 0 };
             self.v[vx] = self.v[vx].wrapping_sub(self.v[vy]);
         }
 
         0x6 => { // 8xy6 - SHR Vx {, Vy}
-            self.v[7] = self.v[vx] & 1;
+            self.v[FLAG_REGISTER] = self.v[vx] & 1;
             self.v[vx] >>= 1;
         }
 
         0x7 => { // 8xy7 - SUBN Vx, Vy
-            self.v[7] = if self.v[vy] >= self.v[vx] { 1 } else { 0 };
+            self.v[FLAG_REGISTER] = if self.v[vy] >= self.v[vx] { 1 } else { 0 };
             self.v[vx] = self.v[vy].wrapping_sub(self.v[vx]);
         }
 
         0xe => { // 8xyE - SHL Vx {, Vy}
-            self.v[7] = self.v[vx] >> 7;
+            self.v[FLAG_REGISTER] = self.v[vx] >> 7;
             self.v[vx] <<= 1;
         }
-        _ => () // NOP
+        _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
     }
     self.pc += 2;
+    Ok(())
 }
 
-fn execute_9xy0( &mut self, op_code: u16) { // 9xy0 SNE Vx, Vy
-    if op_code & 0xf == 0 { 
-        let vx = Chip8::get_vx(op_code);
-        let vy = Chip8::get_vy(op_code);
-        if self.v[vx] != self.v[vy] {
-            self.pc += 2;
+fn execute_9xy0( &mut self, op_code: u16) -> Result<(), Chip8Error> { 
+    match op_code & 0xf { // 9xy0 SNE Vx, Vy
+        0x0 => {
+            let vx = Chip8::get_vx(op_code)?;
+            let vy = Chip8::get_vy(op_code)?;
+            self.pc += if self.v[vx] != self.v[vy] { 4 } else { 2 };
+            Ok(())
         }
+        _ => Err(Chip8Error::UnrecognizedOpcode(op_code)),
     }
-    self.pc += 2;
 }
 
 fn execute_annn( &mut self, op_code: u16) { // Annn - LD I, addr
@@ -260,30 +307,32 @@ fn execute_bnnn( &mut self, op_code: u16) { // Bnnn - JP V0, addr
     self.pc = addr + self.v[0] as u16;
 }
 
-fn execute_cxkk( &mut self, op_code: u16) { // Cxkk - RND Vx, byte
-    let vx = Chip8::get_vx(op_code);
+fn execute_cxkk( &mut self, op_code: u16) -> Result<(), Chip8Error>{ // Cxkk - RND Vx, byte
+    let vx = Chip8::get_vx(op_code)?;
     let data = Chip8::get_data_byte(op_code);
     let rnd: u8 = rand::thread_rng().gen();
     self.v[vx] = data & rnd;
     self.pc += 2;
+    Ok(())
 }
 
-fn execute_dxyn( &mut self, op_code: u16, mem: &Memory) { // Dxyn - DRW Vx, Vy, nibble
-    let vx = Chip8::get_vx(op_code) as usize;
-    let vy = Chip8::get_vy(op_code) as usize;
-    let height = op_code & 0xF;
+fn execute_dxyn( &mut self, op_code: u16, mem: &Memory) -> Result<(), Chip8Error> { // Dxyn - DRW Vx, Vy, nibble
+    let vx = Chip8::get_vx(op_code)?;
+    let vy = Chip8::get_vy(op_code)?;
+    let height = op_code & 0xf;
 
-    self.v[7] = 0; // Reset collision register
+    self.v[FLAG_REGISTER] = 0; // Reset collision register
 
     for offset in 0..height {
-        let sprite_byte = mem.get_byte(self.idx + offset);
+        let sprite_byte = mem.read_byte(MemoryAddress::new(self.idx + offset as u16)?);
+        
         for bit in 0..8 {
             let pixel = (sprite_byte >> (7 - bit)) & 1 != 0;
             let x = (self.v[vx] as usize + bit) % DISPLAY_WIDTH;
             let y = (self.v[vy] as usize + offset as usize) % DISPLAY_HEIGHT;
 
             if self.display[x][y] & pixel {
-                self.v[7] = 1; // Set collision flag
+                self.v[FLAG_REGISTER] = 1; // Set collision flag
             }
 
             // XOR pixel
@@ -292,10 +341,11 @@ fn execute_dxyn( &mut self, op_code: u16, mem: &Memory) { // Dxyn - DRW Vx, Vy, 
     }
     self.idx += height;
     self.pc += 2;
+    Ok(())
 }
 
-fn execute_ennn( &mut self, op_code: u16, window: &Window) { // Starts with E
-    let vx = Chip8::get_vx(op_code);
+fn execute_ennn( &mut self, op_code: u16, window: &Window) -> Result<(), Chip8Error> { // Starts with E
+    let vx = Chip8::get_vx(op_code)?;
     if let Some(key) = KEYS.get_by_left(&self.v[vx]) {
         match op_code & 0x00ff {
             0x9e => { // Ex9E - SKP Vx
@@ -308,42 +358,51 @@ fn execute_ennn( &mut self, op_code: u16, window: &Window) { // Starts with E
                     self.pc += 2;
                 }
             },
-            _ => ()
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
         }
     }
     self.pc += 2;
+    Ok(())
 }
 
-fn execute_fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) { // Starts with F
-    let vx = Chip8::get_vx(op_code);
+fn execute_fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> { // Starts with F
+    let vx = Chip8::get_vx(op_code)?;
     match op_code & 0x00ff {
         0x07 => { // Fx07 - LD Vx, DT
-            self.v[vx] = self.dt;
+            let dt_value = *self.dt.lock().unwrap();
+            self.v[vx] = dt_value;
         }
-
+        
         0x0a => { // Fx0A - LD Vx, K
-            let mut key_pressed = false;
-            while !key_pressed {
-                // Wait for key press
-                if let Some(key) = window.get_keys_pressed(KeyRepeat::No).get(0) {
-                    if let Some(chip8_key) = KEYS.get_by_right(key) {
-                        self.v[vx] = *chip8_key;
-                        key_pressed = true;
-                    }
-                }
-
-                // Keep window responsive
+            // loop that will continue until a key press is detected
+            let mut key_pressed = None;
+            while key_pressed.is_none() {
                 window.update();
+        
+                // Check if any key pressed matches a mapped key
+                if let Some(key) = window.get_keys_pressed(KeyRepeat::No).iter().find_map(|&k| KEYS.get_by_right(&k)) {
+                    self.v[vx] = *key;
+                    key_pressed = Some(*key);
+                }
+        
+                // Sleep to reduce CPU usage while waiting for key press
                 thread::sleep(Duration::from_millis(5));
+        
+                // Handle window closing during wait
+                if !window.is_open() {
+                    return Ok(());
+                }
             }
         }
 
         0x15 => { // Fx15 - LD DT, Vx
-            self.dt = self.v[vx];
+            let mut dt_guard = self.dt.lock().unwrap();
+            *dt_guard = self.v[vx];
         }
 
         0x18 => { // Fx18 - LD ST, Vx
-            self.st = self.v[vx];
+            let mut st_guard = self.st.lock().unwrap();
+            *st_guard = self.v[vx];
         }
 
         0x1e => { // Fx1E - ADD I, Vx
@@ -355,36 +414,47 @@ fn execute_fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window)
         }
 
         0x33 => { // Fx33 - LD B, Vx
-            mem.write_entry(MemoryEntry::new(self.idx, self.v[vx] / 100).unwrap());
-            mem.write_entry(MemoryEntry::new(self.idx + 1, (self.v[vx] % 100) / 10).unwrap());
-            mem.write_entry(MemoryEntry::new(self.idx + 2, self.v[vx] % 10).unwrap());
+            mem.write_entry(MemoryEntry::new(self.idx, self.v[vx] / 100)?);
+            mem.write_entry(MemoryEntry::new(self.idx + 1, (self.v[vx] % 100) / 10)?);
+            mem.write_entry(MemoryEntry::new(self.idx + 2, self.v[vx] % 10)?);
         }
 
         0x55 => { // Fx55 - LD [I], Vx
             for i in 0..vx {
-                mem.write_entry(MemoryEntry::new(self.idx + i as u16, self.v[i]).unwrap());
+                mem.write_entry(MemoryEntry::new(self.idx + i as u16, self.v[i])?);
             }
             self.idx += vx as u16 + 1;
         }
 
         0x65 => { // Fx65 - LD Vx, [I]
             for i in 0..vx {
-                self.v[i] = mem.get_byte(self.idx);
-                self.idx += 1;
+                self.v[i] = mem.read_byte(MemoryAddress::new(self.idx + i as u16)?);
             }
-            self.idx += 1;
+            self.idx += vx as u16 + 1;
         }
-        _ => ()
+        _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
     }
     self.pc += 2;
+    Ok(())
 }
 
-fn get_vx(op_code: u16) -> usize{
-    ((op_code >> 8) & 0x000f) as usize
+fn get_vx(op_code: u16) -> Result<usize, Chip8Error> {
+    let vx = ((op_code >> 8) & 0x000f) as usize;
+    Chip8::validate_register(vx)
 }
 
-fn get_vy(op_code: u16) -> usize {
-    ((op_code >> 4) & 0x000f) as usize
+fn get_vy(op_code: u16) -> Result<usize, Chip8Error> {
+    let vy = ((op_code >> 4) & 0x000f) as usize;
+    Chip8::validate_register(vy)
+}
+
+fn validate_register(register_idx: usize) -> Result<usize, Chip8Error> {
+    // Prevents programs from using registers outside the range as well as the flag register
+    match register_idx.cmp(&FLAG_REGISTER) {
+        Ordering::Greater => Err(Chip8Error::RegisterIndexOutOfBounds(register_idx)),
+        Ordering::Equal => Err(Chip8Error::FlagRegisterUsed),
+        Ordering::Less => Ok(register_idx),
+    }
 }
 
 fn get_data_byte(op_code: u16) -> u8 {
@@ -394,4 +464,47 @@ fn get_data_byte(op_code: u16) -> u8 {
 fn get_addr(op_code: u16) -> u16 {
     op_code & 0x0fff
 }
+}
+
+enum OpCodeType {
+    Zero,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Six,
+    Seven,
+    Eight,
+    Nine,
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+}
+
+impl OpCodeType {
+    fn from_u16(op_code: u16) -> Result<Self, Chip8Error> {
+        match op_code >> 12 {
+            0x0 => Ok(Self::Zero),
+            0x1 => Ok(Self::One),
+            0x2 => Ok(Self::Two),
+            0x3 => Ok(Self::Three),
+            0x4 => Ok(Self::Four),
+            0x5 => Ok(Self::Five),
+            0x6 => Ok(Self::Six),
+            0x7 => Ok(Self::Seven),
+            0x8 => Ok(Self::Eight),
+            0x9 => Ok(Self::Nine),
+            0xA => Ok(Self::A),
+            0xB => Ok(Self::B),
+            0xC => Ok(Self::C),
+            0xD => Ok(Self::D),
+            0xE => Ok(Self::E),
+            0xF => Ok(Self::F),
+            _ => Err(Chip8Error::UnrecognizedOpcode(op_code)), // Impossible to happend due to the bit shift
+        }
+    }
 }

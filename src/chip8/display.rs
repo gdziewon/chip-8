@@ -1,5 +1,5 @@
 use minifb::{Window, WindowOptions};
-use super::{DISPLAY_HEIGHT, DISPLAY_WIDTH, SCALE};
+use super::{DISPLAY_HEIGHT, DISPLAY_WIDTH, SCALE, errors::Chip8Error};
 
 pub struct Display {
     pub window: Window,
@@ -7,7 +7,7 @@ pub struct Display {
 }
 
 impl Display {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, Chip8Error> {
         let buffer: Vec<u32> = vec![0; DISPLAY_WIDTH * DISPLAY_HEIGHT * SCALE * SCALE];
         let window = Window::new(
             "Chip8",
@@ -15,23 +15,19 @@ impl Display {
             DISPLAY_HEIGHT * SCALE,
             WindowOptions::default(),
         )
-        .unwrap_or_else(|e| {
-            panic!("{}", e);
-        });
-        Display {
-            buffer,
-            window
-        }
+        .map_err(Chip8Error::WindowCreationError)?;
+    
+        Ok(Display { buffer, window })
     }
-
-    pub fn update(&mut self, display: &[[bool; DISPLAY_HEIGHT]; DISPLAY_WIDTH]) {
-        // Draw a grid of squares
+    
+    pub fn update(&mut self, display: &[[bool; DISPLAY_HEIGHT]; DISPLAY_WIDTH]) -> Result<(), Chip8Error>{
+        // Draw a grid
         self.update_buffer(&display);
-
-        // Update the window with the buffer
+    
+        // Update the window with buffer
         self.window
             .update_with_buffer(&self.buffer, DISPLAY_WIDTH * SCALE, DISPLAY_HEIGHT * SCALE)
-            .unwrap();
+            .map_err(Chip8Error::WindowUpdateError)
     }
 
 
