@@ -8,6 +8,4 @@ edition = "2021"
 [dependencies]
 rand = "0.8.5"
 minifb = "0.25"
-bimap = "0.6.3"
-lazy_static = "1.4.0"
 rodio = "0.18.0"

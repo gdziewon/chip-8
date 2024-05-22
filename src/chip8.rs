@@ -1,510 +1,491 @@
 mod display;
+mod keys;
 pub mod memory;
 pub mod errors;
 
-pub use memory::{Memory, MemoryEntry, MemoryAddress};
+pub use memory::Memory;
 use errors::Chip8Error;
 use display::Display;
+use keys::Keys;
+
+use std::{collections::HashMap, thread, time::{Duration, Instant}};
 
 use rand::Rng;
-use minifb::{Key, KeyRepeat, Window};
-use bimap::BiMap;
-use lazy_static::lazy_static;
-use rodio::{OutputStream, Sink, source::{SineWave, Source}};
-use std::{cmp::Ordering, thread, time::Duration, sync::{Arc, Mutex}};
+use minifb::{Key, KeyRepeat, Window}; // GUI library
+use rodio::{OutputStream, Sink, source::{SineWave, Source}}; // Audio library
 
+// Display constants
 pub const DISPLAY_WIDTH: usize = 64;
 pub const DISPLAY_HEIGHT: usize = 32;
-pub const SCALE: usize = 15;
+pub const DISPLAY_SCALE: usize = 15;
 
+// Memory constants
 pub const MEMORY_SIZE: usize = 1024 * 4;
 pub const PROGRAM_START: u16 = 0x200;
 
-const MS_DELAY: u64 = 100;
-
-const NUM_REGISTERS: usize = 8;
-const FLAG_REGISTER: usize = 7;
+// Chip8 constants
+const NUM_REGISTERS: usize = 16;
+const FLAG_REGISTER: usize = 15;
 const STACK_DEPTH: usize = 16;
 
-const SINEWAVE_FREQUENCY: f32 = 440.0;
-const TIMERS_FREQUENCY: u64 = 1000 / 60;
+// Timers constants
+const SINEWAVE_FREQUENCY: f32 = 440.0; // A4
 
-lazy_static! {
-    // TODO: Change bindings
-    static ref KEYS: BiMap<u8, Key> = { // Key bindings
-        let mut keys = BiMap::new();
-        keys.insert(0x0, Key::Key0);
-        keys.insert(0x1, Key::Key1);
-        keys.insert(0x2, Key::Key2);
-        keys.insert(0x3, Key::Key3);
-        keys.insert(0x4, Key::Key4);
-        keys.insert(0x5, Key::Key5);
-        keys.insert(0x6, Key::Key6);
-        keys.insert(0x7, Key::Key7);
-        keys.insert(0x8, Key::Key8);
-        keys.insert(0x9, Key::Key9);
-        keys.insert(0xa, Key::A);
-        keys.insert(0xb, Key::B);
-        keys.insert(0xc, Key::C);
-        keys.insert(0xd, Key::D);
-        keys.insert(0xe, Key::E);
-        keys.insert(0xf, Key::F);
-        keys.insert(0xff, Key::Escape);
-        keys
-    };
-}
+// Delay between each instruction execution
+const MS_DELAY: u64 = 1;
+pub const DISPLAY_AND_TIMERS_UPDATE_FREQUENCY: u64 = 1000 / 60; // 60hz
 
 pub struct Chip8 {
-// Registers
-v: [u8; NUM_REGISTERS], // 8 general purpose 8-bit registers
-idx: u16, // 16-bit address register
+    // Registers
+    v: [u8; NUM_REGISTERS], // 16 general purpose 8-bit registers
+    idx: u16, // 16-bit address register
 
-// Timers  - count down at 60hz to 0
-dt: Arc<Mutex<u8>>, // delay timer
-st: Arc<Mutex<u8>>, // sound timer
+    // Timers - counts down at 60hz to 0
+    dt: u8, // delay timer
+    st: u8, // sound timer
 
-pc: u16, // program counter
-sp: u8, // stack pointer
-stack: [u16; STACK_DEPTH], // 16 16-bit stack fields
+    pc: u16, // Program counter
+    sp: u8, // Stack pointer
+    stack: [u16; STACK_DEPTH], // 16 16-bit stack fields
 
-display: [[bool; DISPLAY_HEIGHT]; DISPLAY_WIDTH],
+    display: [[bool; DISPLAY_HEIGHT]; DISPLAY_WIDTH],
+
+    bindings: Keys,
 }
 
 
 impl Chip8 {
-
-pub fn new() -> Self {
-    Chip8 {
-        v: [0x00; NUM_REGISTERS],
-        idx: 0x0000,
-        dt: Arc::new(Mutex::new(0)),
-        st: Arc::new(Mutex::new(0)),
-        pc: PROGRAM_START,
-        sp: 0x00,
-        stack: [0x0000; STACK_DEPTH],
-        display: [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH]
-    }
-}
-
-fn execute( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> {
-    let op_type = OpCodeType::from_u16(op_code)?;
-    match op_type {
-        OpCodeType::Zero => self.execute_0nnn(op_code)?,
-        OpCodeType::One => self.execute_1nnn(op_code),
-        OpCodeType::Two => self.execute_2nnn(op_code),
-        OpCodeType::Three => self.execute_3xkk(op_code)?,
-        OpCodeType::Four => self.execute_4xkk(op_code)?,
-        OpCodeType::Five => self.execute_5xy0(op_code)?,
-        OpCodeType::Six => self.execute_6xkk(op_code)?,
-        OpCodeType::Seven => self.execute_7xkk(op_code)?,
-        OpCodeType::Eight => self.execute_8nnn(op_code)?,
-        OpCodeType::Nine => self.execute_9xy0(op_code)?,
-        OpCodeType::A => self.execute_annn(op_code),
-        OpCodeType::B => self.execute_bnnn(op_code),
-        OpCodeType::C => self.execute_cxkk(op_code)?,
-        OpCodeType::D => self.execute_dxyn(op_code, &mem)?,
-        OpCodeType::E => self.execute_ennn(op_code, &window)?,
-        OpCodeType::F => self.execute_fnnn(op_code, mem, window)?,
-    }
-    Ok(())
-}
-
-pub fn run( &mut self, mem: &mut Memory ) -> Result<(), Chip8Error> {
-    self.run_timers();
-    let mut display_ctl = Display::new()?;
-
-    while display_ctl.window.is_open() {
-        display_ctl.update(&self.display)?;
-
-        let instruction: u16 = mem.get_instruction(self.pc)?;
-        if instruction == 0x0fff { // HALT
-            return Ok(());
+    // Creates a new Chip8 instance with the given key bindings
+    pub fn with(bindings: HashMap<u8, Key>) -> Self {
+        let bindings = Keys::new(bindings);
+        Chip8 {
+            v: [0x00; NUM_REGISTERS],
+            idx: 0x0000,
+            dt: 0,
+            st: 0,
+            pc: PROGRAM_START,
+            sp: 0x00,
+            stack: [0x0000; STACK_DEPTH],
+            display: [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH],
+            bindings,
         }
-
-        self.execute(instruction, mem, &mut display_ctl.window)?;
-
-        thread::sleep(Duration::from_millis(MS_DELAY)); // delay
     }
-    Ok(())
-}
 
-fn run_timers(&self) {
-    let dt = self.dt.clone();
-    let st = self.st.clone();
+    // Creates a new Chip8 instance with default key bindings
+    pub fn new() -> Self {
+        let mut bindings = HashMap::new();
+        bindings.insert(0x0, Key::Key0); // Values 0 to F are mapped to keys 0 to F
+        bindings.insert(0x1, Key::Key1);
+        bindings.insert(0x2, Key::Key2);
+        bindings.insert(0x3, Key::Key3);
+        bindings.insert(0x4, Key::Key4);
+        bindings.insert(0x5, Key::Key5);
+        bindings.insert(0x6, Key::Key6);
+        bindings.insert(0x7, Key::Key7);
+        bindings.insert(0x8, Key::Key8);
+        bindings.insert(0x9, Key::Key9);
+        bindings.insert(0xa, Key::A);
+        bindings.insert(0xb, Key::B);
+        bindings.insert(0xc, Key::C);
+        bindings.insert(0xd, Key::D);
+        bindings.insert(0xe, Key::E);
+        bindings.insert(0xf, Key::F);
+        Self::with(bindings)
+    }
 
-    thread::spawn(move || {
+    // Executes given opcode dividing them by their first nibble
+    fn execute( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> {
+        let op_code = OpCode::new(op_code); // Create OpCode struct for easier access
+        match op_code.code >> 12 {
+            0x0 => self.execute_0nnn(op_code)?,
+            0x1 => self.execute_1nnn(op_code),
+            0x2 => self.execute_2nnn(op_code),
+            0x3 => self.execute_3xkk(op_code),
+            0x4 => self.execute_4xkk(op_code),
+            0x5 => self.execute_5xy0(op_code)?,
+            0x6 => self.execute_6xkk(op_code),
+            0x7 => self.execute_7xkk(op_code),
+            0x8 => self.execute_8nnn(op_code)?,
+            0x9 => self.execute_9xy0(op_code)?,
+            0xA => self.execute_annn(op_code),
+            0xB => self.execute_bnnn(op_code),
+            0xC => self.execute_cxkk(op_code),
+            0xD => self.execute_dxyn(op_code, &mem),
+            0xE => self.execute_ennn(op_code, &window)?,
+            0xF => self.execute_fnnn(op_code, mem, window)?,
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)), // Impossible to reach
+        }
+        Ok(())
+    }
+
+    pub fn run( &mut self, mem: &mut Memory ) -> Result<(), Chip8Error> {
+
+        // Audio setup
         let (_stream, stream_handle) = OutputStream::try_default().unwrap();
         let sink = Sink::try_new(&stream_handle).unwrap();
-
         let source = SineWave::new(SINEWAVE_FREQUENCY).repeat_infinite();
         sink.append(source);
         sink.pause();
 
-        loop {
-            thread::sleep(Duration::from_millis(TIMERS_FREQUENCY));
+        // Display setup
+        let mut display_ctl = Display::new()?;
 
-            let mut sound_timer = st.lock().unwrap();
-            let mut delay_timer = dt.lock().unwrap();
+        let mut last_update = Instant::now(); 
 
-            if *sound_timer > 0 {
-                sink.play();
-                *sound_timer -= 1;
-            } else {
-                sink.pause();
-            }
+        while display_ctl.window.is_open() {
+            // Fetch instruction
+            let instruction: u16 = mem.get_instruction(self.pc);
 
-            if *delay_timer > 0 {
-                *delay_timer -= 1;
-            }
-        }
-    });
-}
+            // Increment program counter
+            self.pc += 2; 
 
-fn execute_0nnn( &mut self, op_code: u16) -> Result<(), Chip8Error>{
-    match op_code {
-        0x00ee => { // 00EE - RET
-            self.pc = self.stack[self.sp as usize];
-            self.sp -= 1;
-        }
+            // Execute instruction
+            self.execute(instruction, mem, &mut display_ctl.window)?; 
 
-        0x00e0 => { // 00E0 - CLS
-            self.display = [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH];
-        }
-        0x0000 => (), // NOP
-        _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
-    }
-    self.pc += 2;
-    Ok(())
-}
+            // Delay between each instruction for more accurate timing
+            thread::sleep(Duration::from_millis(MS_DELAY)); 
+            
+            // Update display at 60hz
+            if last_update.elapsed() >= Duration::from_millis(DISPLAY_AND_TIMERS_UPDATE_FREQUENCY) {
+                display_ctl.update(&self.display)?;
 
-fn execute_1nnn( &mut self, op_code: u16) { // 1nnn - JP addr
-    let addr = Chip8::get_addr(op_code);
-    self.pc = addr;
-}
-
-fn execute_2nnn( &mut self, op_code: u16) { // 2nnn - CALL addr 
-    self.sp += 1;
-    self.stack[self.sp as usize] = self.pc;
-    let addr = Chip8::get_addr(op_code);
-    self.pc = addr;
-}
-
-fn execute_3xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 3xkk - SE Vx, byte
-    let vx = Chip8::get_vx(op_code)?;
-    let data = Chip8::get_data_byte(op_code);
-
-    self.pc += if self.v[vx] == data { 4 } else { 2 };
-    Ok(())
-}
-
-fn execute_4xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 4xkk - SNE Vx, byte
-    let vx = Chip8::get_vx(op_code)?;
-    let data = Chip8::get_data_byte(op_code);
-
-    self.pc += if self.v[vx] != data { 4 } else { 2 };
-    Ok(())
-}
-
-fn execute_5xy0( &mut self, op_code: u16) -> Result<(), Chip8Error>{ 
-    match op_code & 0xf { // 5xy0 - SE Vx, Vy
-        0x0 => {
-            let vx = Chip8::get_vx(op_code)?;
-            let vy = Chip8::get_vy(op_code)?;
-            self.pc += if self.v[vx] == self.v[vy] { 4 } else { 2 };
-            Ok(())
-        }
-        _ => Err(Chip8Error::UnrecognizedOpcode(op_code)),
-    }
-}
-
-fn execute_6xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 6xkk - LD Vx, byte
-    let vx = Chip8::get_vx(op_code)?;
-    let data = Chip8::get_data_byte(op_code);
-    self.v[vx] = data;
-    self.pc += 2;
-    Ok(())
-}
-
-fn execute_7xkk( &mut self, op_code: u16) -> Result<(), Chip8Error> { // 7xkk - ADD Vx, byte
-    let vx = Chip8::get_vx(op_code)?;
-    let data = Chip8::get_data_byte(op_code);
-    self.v[vx] = self.v[vx].wrapping_add(data);
-    self.pc += 2;
-    Ok(())
-}
-
-fn execute_8nnn( &mut self, op_code: u16) -> Result<(), Chip8Error> { // Start with 8
-    let vx = Chip8::get_vx(op_code)?;
-    let vy = Chip8::get_vy(op_code)?;
-    match op_code & 0xf {
-
-        0x0 => { // 8xy0 - LD Vx, Vy
-            self.v[vx] = self.v[vy];
-        }
-
-        0x1 => { // 8xy1 - OR Vx, Vy
-            self.v[vx] |= self.v[vy];
-        }
-
-        0x2 => { // 8xy2 - AND Vx, Vy
-            self.v[vx] &= self.v[vy];
-        } 
-
-        0x3 => { // 8xy3 - XOR Vx, Vy
-            self.v[vx] ^= self.v[vy];
-        }
-        
-        0x4 => { // 8xy4 - ADD Vx, Vy
-            self.v[FLAG_REGISTER] = if self.v[vx] as u16 + self.v[vy] as u16 > 0xff { 1 } else { 0 };
-            self.v[vx] = self.v[vx].wrapping_add(self.v[vy]);
-        }
-
-        0x5 => { // 8xy5 - SUB Vx, Vy
-            self.v[FLAG_REGISTER] = if self.v[vx] >= self.v[vy] { 1 } else { 0 };
-            self.v[vx] = self.v[vx].wrapping_sub(self.v[vy]);
-        }
-
-        0x6 => { // 8xy6 - SHR Vx {, Vy}
-            self.v[FLAG_REGISTER] = self.v[vx] & 1;
-            self.v[vx] >>= 1;
-        }
-
-        0x7 => { // 8xy7 - SUBN Vx, Vy
-            self.v[FLAG_REGISTER] = if self.v[vy] >= self.v[vx] { 1 } else { 0 };
-            self.v[vx] = self.v[vy].wrapping_sub(self.v[vx]);
-        }
-
-        0xe => { // 8xyE - SHL Vx {, Vy}
-            self.v[FLAG_REGISTER] = self.v[vx] >> 7;
-            self.v[vx] <<= 1;
-        }
-        _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
-    }
-    self.pc += 2;
-    Ok(())
-}
-
-fn execute_9xy0( &mut self, op_code: u16) -> Result<(), Chip8Error> { 
-    match op_code & 0xf { // 9xy0 SNE Vx, Vy
-        0x0 => {
-            let vx = Chip8::get_vx(op_code)?;
-            let vy = Chip8::get_vy(op_code)?;
-            self.pc += if self.v[vx] != self.v[vy] { 4 } else { 2 };
-            Ok(())
-        }
-        _ => Err(Chip8Error::UnrecognizedOpcode(op_code)),
-    }
-}
-
-fn execute_annn( &mut self, op_code: u16) { // Annn - LD I, addr
-    let addr = Chip8::get_addr(op_code);
-    self.idx = addr;
-    self.pc += 2;
-}
-
-fn execute_bnnn( &mut self, op_code: u16) { // Bnnn - JP V0, addr
-    let addr = Chip8::get_addr(op_code);
-    self.pc = addr + self.v[0] as u16;
-}
-
-fn execute_cxkk( &mut self, op_code: u16) -> Result<(), Chip8Error>{ // Cxkk - RND Vx, byte
-    let vx = Chip8::get_vx(op_code)?;
-    let data = Chip8::get_data_byte(op_code);
-    let rnd: u8 = rand::thread_rng().gen();
-    self.v[vx] = data & rnd;
-    self.pc += 2;
-    Ok(())
-}
-
-fn execute_dxyn( &mut self, op_code: u16, mem: &Memory) -> Result<(), Chip8Error> { // Dxyn - DRW Vx, Vy, nibble
-    let vx = Chip8::get_vx(op_code)?;
-    let vy = Chip8::get_vy(op_code)?;
-    let height = op_code & 0xf;
-
-    self.v[FLAG_REGISTER] = 0; // Reset collision register
-
-    for offset in 0..height {
-        let sprite_byte = mem.read_byte(MemoryAddress::new(self.idx + offset as u16)?);
-        
-        for bit in 0..8 {
-            let pixel = (sprite_byte >> (7 - bit)) & 1 != 0;
-            let x = (self.v[vx] as usize + bit) % DISPLAY_WIDTH;
-            let y = (self.v[vy] as usize + offset as usize) % DISPLAY_HEIGHT;
-
-            if self.display[x][y] & pixel {
-                self.v[FLAG_REGISTER] = 1; // Set collision flag
-            }
-
-            // XOR pixel
-            self.display[x][y] ^= pixel;
-        }
-    }
-    self.idx += height;
-    self.pc += 2;
-    Ok(())
-}
-
-fn execute_ennn( &mut self, op_code: u16, window: &Window) -> Result<(), Chip8Error> { // Starts with E
-    let vx = Chip8::get_vx(op_code)?;
-    if let Some(key) = KEYS.get_by_left(&self.v[vx]) {
-        match op_code & 0x00ff {
-            0x9e => { // Ex9E - SKP Vx
-                if window.is_key_down(*key) {
-                    self.pc += 2;
+                if self.st > 0 { // Decrement sound timer at 60hz
+                    sink.play(); // Play sound when sound timer is greater than 0
+                    self.st -= 1;
+                } else {
+                    sink.pause(); // Pause sound when sound timer is 0
                 }
-            },
-            0xa1 => { // ExA1 - SKNP Vx
-                if !window.is_key_down(*key) {
-                    self.pc += 2;
-                }
-            },
-            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
-        }
-    }
-    self.pc += 2;
-    Ok(())
-}
 
-fn execute_fnnn( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> { // Starts with F
-    let vx = Chip8::get_vx(op_code)?;
-    match op_code & 0x00ff {
-        0x07 => { // Fx07 - LD Vx, DT
-            let dt_value = *self.dt.lock().unwrap();
-            self.v[vx] = dt_value;
-        }
-        
-        0x0a => { // Fx0A - LD Vx, K
-            // loop that will continue until a key press is detected
-            let mut key_pressed = None;
-            while key_pressed.is_none() {
-                window.update();
-        
-                // Check if any key pressed matches a mapped key
-                if let Some(key) = window.get_keys_pressed(KeyRepeat::No).iter().find_map(|&k| KEYS.get_by_right(&k)) {
-                    self.v[vx] = *key;
-                    key_pressed = Some(*key);
+                if self.dt > 0 { // Decrement delay timer at 60hz
+                    self.dt -= 1;
                 }
-        
-                // Sleep to reduce CPU usage while waiting for key press
-                thread::sleep(Duration::from_millis(5));
-        
-                // Handle window closing during wait
-                if !window.is_open() {
-                    return Ok(());
-                }
+
+                last_update = Instant::now();
             }
         }
+        Ok(())
+    }
 
-        0x15 => { // Fx15 - LD DT, Vx
-            let mut dt_guard = self.dt.lock().unwrap();
-            *dt_guard = self.v[vx];
-        }
+    // 0x0nnn - System calls
+    fn execute_0nnn( &mut self, op_code: OpCode) -> Result<(), Chip8Error>{
+        match op_code.code {
+            // 0nnn - SYS addr is ignored by modern interpreters
 
-        0x18 => { // Fx18 - LD ST, Vx
-            let mut st_guard = self.st.lock().unwrap();
-            *st_guard = self.v[vx];
-        }
-
-        0x1e => { // Fx1E - ADD I, Vx
-            self.idx += self.v[vx] as u16;
-        }
-
-        0x29 => { // Fx29 - LD F, Vx
-            self.idx = self.v[vx] as u16 * 5;
-        }
-
-        0x33 => { // Fx33 - LD B, Vx
-            mem.write_entry(MemoryEntry::new(self.idx, self.v[vx] / 100)?);
-            mem.write_entry(MemoryEntry::new(self.idx + 1, (self.v[vx] % 100) / 10)?);
-            mem.write_entry(MemoryEntry::new(self.idx + 2, self.v[vx] % 10)?);
-        }
-
-        0x55 => { // Fx55 - LD [I], Vx
-            for i in 0..vx {
-                mem.write_entry(MemoryEntry::new(self.idx + i as u16, self.v[i])?);
+            // 00EE - RET
+            0x00ee => { // Return from a subroutine
+                self.pc = self.stack[self.sp as usize];
+                self.sp -= 1;
             }
-            self.idx += vx as u16 + 1;
-        }
-
-        0x65 => { // Fx65 - LD Vx, [I]
-            for i in 0..vx {
-                self.v[i] = mem.read_byte(MemoryAddress::new(self.idx + i as u16)?);
+            
+            // 00E0 - CLS
+            0x00e0 => { // Clear the display
+                self.display = [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH];
             }
-            self.idx += vx as u16 + 1;
+            
+            // NOP
+            0x0000 => (), // Do nothing
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
         }
-        _ => return Err(Chip8Error::UnrecognizedOpcode(op_code)),
+        Ok(())
     }
-    self.pc += 2;
-    Ok(())
-}
 
-fn get_vx(op_code: u16) -> Result<usize, Chip8Error> {
-    let vx = ((op_code >> 8) & 0x000f) as usize;
-    Chip8::validate_register(vx)
-}
-
-fn get_vy(op_code: u16) -> Result<usize, Chip8Error> {
-    let vy = ((op_code >> 4) & 0x000f) as usize;
-    Chip8::validate_register(vy)
-}
-
-fn validate_register(register_idx: usize) -> Result<usize, Chip8Error> {
-    // Prevents programs from using registers outside the range as well as the flag register
-    match register_idx.cmp(&FLAG_REGISTER) {
-        Ordering::Greater => Err(Chip8Error::RegisterIndexOutOfBounds(register_idx)),
-        Ordering::Equal => Err(Chip8Error::FlagRegisterUsed),
-        Ordering::Less => Ok(register_idx),
+    // 1nnn - JP addr
+    fn execute_1nnn( &mut self, op_code: OpCode) { // Jump to location nnn
+        let addr = op_code.addr();
+        self.pc = addr;
     }
-}
 
-fn get_data_byte(op_code: u16) -> u8 {
-    (op_code & 0x00ff) as u8
-}
+    // 2nnn - CALL addr
+    fn execute_2nnn( &mut self, op_code: OpCode) { // Call subroutine at nnn
+        self.sp += 1;
+        self.stack[self.sp as usize] = self.pc;
+        let addr = op_code.addr();
+        self.pc = addr;
+    }
 
-fn get_addr(op_code: u16) -> u16 {
-    op_code & 0x0fff
-}
-}
-
-enum OpCodeType {
-    Zero,
-    One,
-    Two,
-    Three,
-    Four,
-    Five,
-    Six,
-    Seven,
-    Eight,
-    Nine,
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-}
-
-impl OpCodeType {
-    fn from_u16(op_code: u16) -> Result<Self, Chip8Error> {
-        match op_code >> 12 {
-            0x0 => Ok(Self::Zero),
-            0x1 => Ok(Self::One),
-            0x2 => Ok(Self::Two),
-            0x3 => Ok(Self::Three),
-            0x4 => Ok(Self::Four),
-            0x5 => Ok(Self::Five),
-            0x6 => Ok(Self::Six),
-            0x7 => Ok(Self::Seven),
-            0x8 => Ok(Self::Eight),
-            0x9 => Ok(Self::Nine),
-            0xA => Ok(Self::A),
-            0xB => Ok(Self::B),
-            0xC => Ok(Self::C),
-            0xD => Ok(Self::D),
-            0xE => Ok(Self::E),
-            0xF => Ok(Self::F),
-            _ => Err(Chip8Error::UnrecognizedOpcode(op_code)), // Impossible to happend due to the bit shift
+    // 3xkk - SE Vx, byte
+    fn execute_3xkk( &mut self, op_code: OpCode) { // Skip next instruction if Vx = kk
+        let vx = op_code.vx();
+        let data = op_code.byte();
+        if self.v[vx] == data {
+            self.pc += 2;
         }
     }
+
+    // 4xkk - SNE Vx, byte
+    fn execute_4xkk( &mut self, op_code: OpCode) { // Skip next instruction if Vx != kk
+        let vx = op_code.vx();
+        let data = op_code.byte();
+        if self.v[vx] != data {
+            self.pc += 2;
+        }
+    }
+
+    // 5xy0 - SE Vx, Vy
+    fn execute_5xy0( &mut self, op_code: OpCode) -> Result<(), Chip8Error>{ // Skip next instruction if Vx = Vy
+        // Check if last nibble is 0, if not, it's an invalid opcode
+        if op_code.nibble() != 0x0 { 
+            return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2));
+        }
+
+        let vx = op_code.vx(); 
+        let vy = op_code.vy();
+        if self.v[vx] == self.v[vy] {
+            self.pc += 2;
+        }
+        Ok(())
+    }
+
+    // 6xkk - LD Vx, byte
+    fn execute_6xkk( &mut self, op_code: OpCode) { // Set Vx = kk
+        let vx = op_code.vx();
+        let data = op_code.byte();
+        self.v[vx] = data;
+    }
+
+    // 7xkk - ADD Vx, byte
+    fn execute_7xkk( &mut self, op_code: OpCode) { // Set Vx = Vx + kk
+        let vx = op_code.vx();
+        let data = op_code.byte();
+        self.v[vx] = self.v[vx].wrapping_add(data);
+    }
+
+    // Starts with 8
+    fn execute_8nnn( &mut self, op_code: OpCode) -> Result<(), Chip8Error> {
+        let vx = op_code.vx();
+        let vy = op_code.vy();
+        match op_code.nibble() {
+            
+            // 8xy0 - LD Vx, Vy
+            0x0 => { // Set Vx = Vy
+                self.v[vx] = self.v[vy];
+            }
+            
+            // 8xy1 - OR Vx, Vy
+            0x1 => { // Set Vx = Vx OR Vy
+                self.v[vx] |= self.v[vy];
+            }
+            
+            // 8xy2 - AND Vx, Vy
+            0x2 => { // Set Vx = Vx AND Vy
+                self.v[vx] &= self.v[vy];
+            } 
+            
+            // 8xy3 - XOR Vx, Vy
+            0x3 => { // Set Vx = Vx XOR Vy
+                self.v[vx] ^= self.v[vy];
+            }
+            
+            // 8xy4 - ADD Vx, Vy
+            0x4 => { // Set Vx = Vx + Vy, set VF = carry
+                self.v[FLAG_REGISTER] = if self.v[vx] as u16 + self.v[vy] as u16 > 0xff { 1 } else { 0 };
+                self.v[vx] = self.v[vx].wrapping_add(self.v[vy]);
+            }
+
+            // 8xy5 - SUB Vx, Vy
+            0x5 => { // Set Vx = Vx - Vy, set VF = NOT borrow
+                self.v[FLAG_REGISTER] = if self.v[vx] >= self.v[vy] { 1 } else { 0 };
+                self.v[vx] = self.v[vx].wrapping_sub(self.v[vy]);
+            }
+
+            // 8xy6 - SHR Vx {, Vy}
+            0x6 => { // Set Vx = Vx SHR 1
+                self.v[FLAG_REGISTER] = self.v[vx] & 1;
+                self.v[vx] >>= 1;
+            }
+            
+            // 8xy7 - SUBN Vx, Vy
+            0x7 => { // Set Vx = Vy - Vx, set VF = NOT borrow
+                self.v[FLAG_REGISTER] = if self.v[vy] >= self.v[vx] { 1 } else { 0 };
+                self.v[vx] = self.v[vy].wrapping_sub(self.v[vx]);
+            }
+
+            // 8xyE - SHL Vx {, Vy}
+            0xe => { // Set Vx = Vx SHL 1
+                self.v[FLAG_REGISTER] = self.v[vx] >> 7;
+                self.v[vx] <<= 1;
+            }
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
+        }
+        Ok(())
+    }
+
+    // 9xy0 SNE Vx, Vy
+    fn execute_9xy0( &mut self, op_code: OpCode) -> Result<(), Chip8Error> { // Skip next instruction if Vx != Vy
+        // Check if last nibble is 0, if not, it's an invalid opcode
+        if op_code.nibble() != 0x0 { 
+            return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2));
+        }
+ 
+        let vx = op_code.vx();
+        let vy = op_code.vy();
+        if self.v[vx] != self.v[vy] {
+            self.pc += 2;
+        }
+        Ok(())
+    }
+
+     // Annn - LD I, addr
+    fn execute_annn( &mut self, op_code: OpCode) { // Set I = nnn
+        let addr = op_code.addr();
+        self.idx = addr;
+    }
+
+    // Bnnn - JP V0, addr
+    fn execute_bnnn( &mut self, op_code: OpCode) { // Jump to location nnn + V0
+        let addr = op_code.addr();
+        self.pc = addr + self.v[0] as u16;
+    }
+
+    // Cxkk - RND Vx, byte
+    fn execute_cxkk( &mut self, op_code: OpCode) { // Set Vx = random byte AND kk
+        let vx = op_code.vx();
+        let data = op_code.byte();
+        let rnd: u8 = rand::thread_rng().gen();
+        self.v[vx] = data & rnd;
+    }
+
+    // Dxyn - DRW Vx, Vy, nibble
+    fn execute_dxyn( &mut self, op_code: OpCode, mem: &Memory) {  // Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision
+        let vx = op_code.vx();
+        let vy = op_code.vy();
+        let height = op_code.nibble() as u16;
+        self.v[FLAG_REGISTER] = 0; // Reset collision register
+
+        for offset in 0..height {
+            let sprite_byte = mem.read_byte(self.idx + offset as u16);
+            
+            for bit in 0..8 {
+                let pixel = (sprite_byte >> (7 - bit)) & 1 != 0;
+                let x = (self.v[vx] as usize + bit) % DISPLAY_WIDTH;
+                let y = (self.v[vy] as usize + offset as usize) % DISPLAY_HEIGHT;
+
+                if self.display[x][y] & pixel {
+                    self.v[FLAG_REGISTER] = 1; // Set collision flag
+                }
+
+                // XOR pixel
+                self.display[x][y] ^= pixel;
+            }
+        }
+    }
+
+    // Ennn - Keyboard operations
+    fn execute_ennn( &mut self, op_code: OpCode, window: &Window) -> Result<(), Chip8Error> { 
+        let vx = op_code.vx();
+        if let Some(key) = self.bindings.get_by_value(self.v[vx]) {
+            match op_code.byte() {
+
+                // Ex9E - SKP Vx
+                0x9e => { // Skip next instruction if key with the value of Vx is pressed
+                    if window.is_key_down(*key) {
+                        self.pc += 2;
+                    }
+                },
+
+                // ExA1 - SKNP Vx
+                0xa1 => { // Skip next instruction if key with the value of Vx is not pressed
+                    if !window.is_key_down(*key) {
+                        self.pc += 2;
+                    }
+                },
+                _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
+            }
+        }
+        Ok(())
+    }
+
+    // Fnnn - Miscellaneous operations
+    fn execute_fnnn( &mut self, op_code: OpCode, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> { // Starts with F
+        let vx = op_code.vx();
+        match op_code.byte() {
+
+            // Fx07 - LD Vx, DT
+            0x07 => { // Set Vx = delay timer value
+                self.v[vx] = self.dt;
+            }
+            
+            // Fx0A - LD Vx, K
+            0x0a => {  // Wait for a key press, store the value of the key in Vx
+                // Loop that will continue until a key press is detected
+                let mut key_pressed = None;
+                while key_pressed.is_none() {
+                    window.update();
+            
+                    // Check if any key pressed matches a mapped key
+                    if let Some(key) = window.get_keys_pressed(KeyRepeat::No)
+                                                .iter().find_map(|&k| self.bindings.get_by_key(&k)) {
+                        self.v[vx] = *key;
+                        key_pressed = Some(*key);
+                    }
+            
+                    // Sleep to reduce CPU usage while waiting for key press
+                    thread::sleep(Duration::from_millis(5));
+            
+                    // Handle window closing during wait
+                    if !window.is_open() {
+                        return Ok(());
+                    }
+                }
+            }
+
+            // Fx15 - LD DT, Vx
+            0x15 => { // Set delay timer = Vx
+                self.dt = self.v[vx];
+            }
+            
+            // Fx18 - LD ST, Vx
+            0x18 => { // Set sound timer = Vx
+                self.st = self.v[vx];
+            }
+
+            // Fx1E - ADD I, Vx
+            0x1e => { // Set I = I + Vx
+                self.idx += self.v[vx] as u16;
+            }
+
+            // Fx29 - LD F, Vx
+            0x29 => { // Set I = location of sprite for digit Vx
+                self.idx = self.v[vx] as u16 * 5;
+            }
+
+            // Fx33 - LD B, Vx
+            0x33 => { // Store BCD representation of Vx in memory locations I, I+1, I+2
+                mem.write_byte(self.idx, self.v[vx] / 100);
+                mem.write_byte(self.idx + 1, (self.v[vx] % 100) / 10);
+                mem.write_byte(self.idx + 2, self.v[vx] % 10);
+            }
+
+            // Fx55 - LD [I], Vx
+            0x55 => { // Store registers V0 through Vx in memory starting at location I
+                for i in 0..vx {
+                    mem.write_byte(self.idx + i as u16, self.v[i]);
+                }
+                self.idx += vx as u16 + 1;
+            }
+
+            // Fx65 - LD Vx, [I]
+            0x65 => { // Read registers V0 through Vx from memory starting at location I
+                for i in 0..vx {
+                    self.v[i] = mem.read_byte(self.idx + i as u16);
+                }
+                self.idx += vx as u16 + 1;
+            }
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
+        }
+        Ok(())
+    }
+}
+
+struct OpCode {
+    code: u16,
+}
+
+impl OpCode {
+    fn new(code: u16) -> Self { OpCode { code }}
+    fn vx (&self) -> usize { ((self.code >> 8) & 0x000f) as usize }
+    fn vy (&self) -> usize { ((self.code >> 4) & 0x000f) as usize }
+    fn nibble (&self) -> u8 { (self.code & 0x000f) as u8 }
+    fn byte (&self) -> u8 { (self.code & 0x00ff) as u8 }
+    fn addr (&self) -> u16 { self.code & 0x0fff }
 }

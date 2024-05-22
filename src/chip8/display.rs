@@ -1,5 +1,5 @@
 use minifb::{Window, WindowOptions};
-use super::{DISPLAY_HEIGHT, DISPLAY_WIDTH, SCALE, errors::Chip8Error};
+use super::{DISPLAY_HEIGHT, DISPLAY_WIDTH, DISPLAY_SCALE, errors::Chip8Error};
 
 pub struct Display {
     pub window: Window,
@@ -8,11 +8,11 @@ pub struct Display {
 
 impl Display {
     pub fn new() -> Result<Self, Chip8Error> {
-        let buffer: Vec<u32> = vec![0; DISPLAY_WIDTH * DISPLAY_HEIGHT * SCALE * SCALE];
+        let buffer: Vec<u32> = vec![0; DISPLAY_WIDTH * DISPLAY_HEIGHT * DISPLAY_SCALE * DISPLAY_SCALE];
         let window = Window::new(
             "Chip8",
-            DISPLAY_WIDTH * SCALE,
-            DISPLAY_HEIGHT * SCALE,
+            DISPLAY_WIDTH * DISPLAY_SCALE,
+            DISPLAY_HEIGHT * DISPLAY_SCALE,
             WindowOptions::default(),
         )
         .map_err(Chip8Error::WindowCreationError)?;
@@ -26,7 +26,7 @@ impl Display {
     
         // Update the window with buffer
         self.window
-            .update_with_buffer(&self.buffer, DISPLAY_WIDTH * SCALE, DISPLAY_HEIGHT * SCALE)
+            .update_with_buffer(&self.buffer, DISPLAY_WIDTH * DISPLAY_SCALE, DISPLAY_HEIGHT * DISPLAY_SCALE)
             .map_err(Chip8Error::WindowUpdateError)
     }
 
@@ -41,9 +41,9 @@ impl Display {
     }
     
     fn fill_square(&mut self, x: usize, y: usize, color: u32) {
-        for i in 0..SCALE {
-            for j in 0..SCALE {
-                self.buffer[(x * SCALE + i) + (y * SCALE + j) * DISPLAY_WIDTH * SCALE] = color;
+        for i in 0..DISPLAY_SCALE {
+            for j in 0..DISPLAY_SCALE {
+                self.buffer[(x * DISPLAY_SCALE + i) + ((y * DISPLAY_SCALE + j) * DISPLAY_WIDTH * DISPLAY_SCALE)] = color;
             }
         }
     }

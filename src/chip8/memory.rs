@@ -1,9 +1,7 @@
-mod sprites;
-
-use std::{fs, io::ErrorKind};
+use std::error::Error;
+use std::io::{BufReader, Read};
+use std::fs::File;
 use super::{MEMORY_SIZE, PROGRAM_START, errors::Chip8Error};
-
-const AVAILABLE_MEMORY: usize = MEMORY_SIZE - PROGRAM_START as usize;
 
 pub struct Memory {
     memory: [u8; MEMORY_SIZE]
@@ -13,113 +11,75 @@ impl Memory {
     pub fn new() -> Self {
         let mut memory = [0; MEMORY_SIZE];
 
-        sprites::set_sprites(&mut memory);
+        // Font sprites
+        let sprites = [
+            0xf0, 0x90, 0x90, 0x90, 0xf0, // "0"
+            0x20, 0x60, 0x20, 0x20, 0x70, // "1"
+            0xf0, 0x10, 0xf0, 0x80, 0xf0, // "2"
+            0xf0, 0x10, 0xf0, 0x10, 0xf0, // "3"
+            0x90, 0x90, 0xf0, 0x10, 0x10, // "4"
+            0xf0, 0x80, 0xf0, 0x10, 0xf0, // "5"
+            0xf0, 0x80, 0xf0, 0x90, 0xf0, // "6"
+            0xf0, 0x10, 0x20, 0x40, 0x40, // "7"
+            0xf0, 0x90, 0xf0, 0x90, 0xf0, // "8"
+            0xf0, 0x90, 0xf0, 0x10, 0xf0, // "9"
+            0xf0, 0x90, 0xf0, 0x90, 0x90, // "A"
+            0xe0, 0x90, 0xe0, 0x90, 0xe0, // "B"
+            0xf0, 0x80, 0x80, 0x80, 0xf0, // "C"
+            0xe0, 0x90, 0x90, 0x90, 0xe0, // "D"
+            0xf0, 0x80, 0xf0, 0x80, 0xf0, // "E"
+            0xf0, 0x80, 0xf0, 0x80, 0x80  // "F"
+        ];
+
+        // Load font sprites into memory - 0x00 to 0x4F
+        for (i, &byte) in sprites.iter().enumerate() {
+            memory[i] = byte;
+        }
 
         Memory { memory }
     }
 
-    pub fn read_byte(&self, addr: MemoryAddress) -> u8 {
-        self.memory[addr.get() as usize]  // Direct access since MemoryAddress is already validated
+    // Assumes addr is always valid, panics if out of bounds
+    pub fn read_byte(&self, addr: u16) -> u8 {
+        self.memory[addr as usize]
     }
     
+    // Same here
+    pub fn write_byte(&mut self, addr: u16, data: u8) {
+        self.memory[addr as usize] = data;
+    }
 
-    pub fn get_instruction(&self, addr: u16) -> Result<u16, Chip8Error> {
-        let high_byte = self.read_byte(MemoryAddress::new(addr)?);
-        let low_byte = self.read_byte(MemoryAddress::new(addr + 1)?);
+    // Fetches an instruction from memory - 2 bytes
+    pub fn get_instruction(&self, addr: u16) -> u16 {
+        let high_byte = self.read_byte(addr);
+        let low_byte = self.read_byte(addr + 1);
     
-        Ok(((high_byte as u16) << 8) | low_byte as u16)
+        ((high_byte as u16) << 8) | low_byte as u16
     }
     
-
-    pub fn write_entry(&mut self, entry: MemoryEntry) {
-        self.memory[entry.get_address() as usize] = entry.data;
-    }
-    
-
-    pub fn build(mut args: impl Iterator<Item = String>) -> Result<Self, Chip8Error> {
+    // Loads file from args
+    pub fn from(mut args: impl Iterator<Item = String>) -> Result<Self, Box<dyn Error>> {
         match (args.next(), args.next()) {
             (Some(_), Some(file_path)) => {
-                match fs::read_to_string(&file_path) {
-                    Ok(contents) => Memory::from(&contents),
-                    Err(err) => match err.kind() {
-                        ErrorKind::NotFound => Err(Chip8Error::FileNotFound(file_path.to_string())),
-                        ErrorKind::PermissionDenied => Err(Chip8Error::PermissionDenied(file_path.to_string())),
-                        _ => Err(Chip8Error::FileReadError(file_path.to_string())),
-                    },
-                }
+                let mut memory = Memory::new();
+                memory.load(&file_path)?;
+                Ok(memory)
             },
-            _ => Err(Chip8Error::MissingFilePath),
+            _ => Err(Box::new(Chip8Error::MissingFilePath))
         }
     }
 
-    pub fn from(contents: &str) -> Result<Self, Chip8Error> {
-        let lines: Vec<_> = contents.lines().collect();
-        if lines.len() > AVAILABLE_MEMORY {
-            return Err(Chip8Error::TooManyLines(lines.len(), AVAILABLE_MEMORY));
+    // Loads program from file
+    pub fn load(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
+        let f = BufReader::new(File::open(file_path)?);
+
+        for (i, byte) in f.bytes().enumerate() {
+            let idx = PROGRAM_START as usize + i;
+            if idx >= MEMORY_SIZE {
+                return Err(Box::new(Chip8Error::TooManyLines(i, MEMORY_SIZE)));
+            }
+            self.memory[idx] = byte?;
         }
-    
-        let mut memory = Self::new();
-        
-        for (i, line) in lines.iter().enumerate() {
-            let entry = MemoryEntry::from_line(line, i + 1)?;
-            memory.write_entry(entry);
-        }
-    
-        Ok(memory)
-    }
-}
-
-pub struct MemoryEntry {
-    address: MemoryAddress,
-    data: u8,
-}
-
-impl MemoryEntry {
-    pub fn new(address: u16, data: u8) -> Result<Self, Chip8Error> {
-        let memory_address = MemoryAddress::new(address)?;
-        if address < PROGRAM_START {
-            Err(Chip8Error::AddressTooLow(address, PROGRAM_START))
-        } else {
-            Ok(MemoryEntry { address: memory_address, data })
-        }
-    }
-
-    fn from_line(line: &str, line_number: usize) -> Result<Self, Chip8Error> {
-        let mut parts = line.split_whitespace();
-        
-        let address = parts.next()
-            .ok_or(Chip8Error::MissingAddress(line_number))
-            .and_then(|addr| u16::from_str_radix(addr.strip_prefix("0x").unwrap_or(addr), 16)
-                .map_err(|_| Chip8Error::InvalidAddress(line_number, addr.to_string())))?;
-        
-        let data = parts.next()
-            .ok_or(Chip8Error::MissingData(line_number))
-            .and_then(|data| u8::from_str_radix(data.strip_prefix("0x").unwrap_or(data), 16)
-                .map_err(|_| Chip8Error::InvalidData(line_number, data.to_string())))?;
-        
-        MemoryEntry::new(address, data).map_err(|_| Chip8Error::MemoryEntryError(line_number))
-    }
-
-    pub fn get_address(&self) -> u16 {
-        self.address.get()
-    }
-    
-}
-
-pub struct MemoryAddress {
-    address: u16,
-}
-
-impl MemoryAddress {
-    pub fn new(address: u16) -> Result<Self, Chip8Error> {
-        if address >= MEMORY_SIZE as u16 {
-            Err(Chip8Error::AddressTooHigh(address, MEMORY_SIZE))
-        } else {
-            Ok(MemoryAddress { address })
-        }
-    }
-
-    pub fn get(&self) -> u16 {
-        self.address
+        Ok(())
     }
 }
