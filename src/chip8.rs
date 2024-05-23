@@ -11,28 +11,31 @@ use keys::Keys;
 use std::{collections::HashMap, thread, time::{Duration, Instant}};
 
 use rand::Rng;
-use minifb::{Key, KeyRepeat, Window}; // GUI library
+use minifb::{Key, Scale}; // GUI library
 use rodio::{OutputStream, Sink, source::{SineWave, Source}}; // Audio library
 
-// Display constants
+// Display
 pub const DISPLAY_WIDTH: usize = 64;
 pub const DISPLAY_HEIGHT: usize = 32;
-pub const DISPLAY_SCALE: usize = 15;
+pub const DISPLAY_SCALE: Scale = Scale::X16;
+const WINDOW_NAME: &str = "Chip8 Emulator";
 
-// Memory constants
+// Memory
 pub const MEMORY_SIZE: usize = 1024 * 4;
 pub const PROGRAM_START: u16 = 0x200;
 
-// Chip8 constants
+// Chip8 specifications
 const NUM_REGISTERS: usize = 16;
 const FLAG_REGISTER: usize = 15;
 const STACK_DEPTH: usize = 16;
 
-// Timers constants
+// Sound
 const SINEWAVE_FREQUENCY: f32 = 440.0; // A4
 
 // Delay between each instruction execution
 const MS_DELAY: u64 = 1;
+
+// Display and timers update frequency
 pub const DISPLAY_AND_TIMERS_UPDATE_FREQUENCY: u64 = 1000 / 60; // 60hz
 
 pub struct Chip8 {
@@ -48,9 +51,9 @@ pub struct Chip8 {
     sp: u8, // Stack pointer
     stack: [u16; STACK_DEPTH], // 16 16-bit stack fields
 
-    display: [[bool; DISPLAY_HEIGHT]; DISPLAY_WIDTH],
+    display: Display, // Display struct 
 
-    bindings: Keys,
+    bindings: Keys, // Key bindings
 }
 
 
@@ -58,6 +61,7 @@ impl Chip8 {
     // Creates a new Chip8 instance with the given key bindings
     pub fn with(bindings: HashMap<u8, Key>) -> Self {
         let bindings = Keys::new(bindings);
+        let display = Display::new();
         Chip8 {
             v: [0x00; NUM_REGISTERS],
             idx: 0x0000,
@@ -66,35 +70,71 @@ impl Chip8 {
             pc: PROGRAM_START,
             sp: 0x00,
             stack: [0x0000; STACK_DEPTH],
-            display: [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH],
+            display,
             bindings,
         }
     }
 
     // Creates a new Chip8 instance with default key bindings
     pub fn new() -> Self {
-        let mut bindings = HashMap::new();
-        bindings.insert(0x0, Key::Key0); // Values 0 to F are mapped to keys 0 to F
-        bindings.insert(0x1, Key::Key1);
-        bindings.insert(0x2, Key::Key2);
-        bindings.insert(0x3, Key::Key3);
-        bindings.insert(0x4, Key::Key4);
-        bindings.insert(0x5, Key::Key5);
-        bindings.insert(0x6, Key::Key6);
-        bindings.insert(0x7, Key::Key7);
-        bindings.insert(0x8, Key::Key8);
-        bindings.insert(0x9, Key::Key9);
-        bindings.insert(0xa, Key::A);
-        bindings.insert(0xb, Key::B);
-        bindings.insert(0xc, Key::C);
-        bindings.insert(0xd, Key::D);
-        bindings.insert(0xe, Key::E);
-        bindings.insert(0xf, Key::F);
+        let bindings = Chip8::get_default_bindings();
         Self::with(bindings)
     }
 
+    pub fn run( &mut self, mem: &mut Memory ) -> Result<(), Chip8Error> {
+
+        // Audio setup
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let sink = Sink::try_new(&stream_handle).unwrap();
+        let source = SineWave::new(SINEWAVE_FREQUENCY).repeat_infinite();
+        sink.append(source);
+        sink.pause();
+
+        // Open window
+        self.display.init()?;
+
+        let mut last_update = Instant::now(); 
+
+        while self.display.is_open() {
+            // Fetch instruction
+            let instruction: u16 = mem.get_instruction(self.pc);
+
+            // Increment program counter
+            self.pc += 2; 
+
+            // Execute instruction
+            self.execute(instruction, mem)?; 
+
+            // Delay between each instruction for more accurate timing
+            thread::sleep(Duration::from_millis(MS_DELAY)); 
+            
+            // Update timers and display at 60hz
+            if last_update.elapsed() >= Duration::from_millis(DISPLAY_AND_TIMERS_UPDATE_FREQUENCY) {
+                self.update(&sink)?;
+                last_update = Instant::now();
+            }
+        }
+        Ok(())
+    }
+
+    fn update(&mut self, sink: &Sink) -> Result<(), Chip8Error> {
+        self.display.update()?; // Update display
+
+        if self.st > 0 { // Decrement sound timer at 60hz
+            sink.play(); // Play sound when sound timer is greater than 0
+            self.st -= 1;
+        } else {
+            sink.pause(); // Pause sound when sound timer is 0
+        }
+
+        if self.dt > 0 { // Decrement delay timer at 60hz
+            self.dt -= 1;
+        }
+        Ok(())
+    }
+
     // Executes given opcode dividing them by their first nibble
-    fn execute( &mut self, op_code: u16, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> {
+    fn execute( &mut self, op_code: u16, mem: &mut Memory) -> Result<(), Chip8Error> {
         let op_code = OpCode::new(op_code); // Create OpCode struct for easier access
         match op_code.code >> 12 {
             0x0 => self.execute_0nnn(op_code)?,
@@ -111,57 +151,9 @@ impl Chip8 {
             0xB => self.execute_bnnn(op_code),
             0xC => self.execute_cxkk(op_code),
             0xD => self.execute_dxyn(op_code, &mem),
-            0xE => self.execute_ennn(op_code, &window)?,
-            0xF => self.execute_fnnn(op_code, mem, window)?,
+            0xE => self.execute_ennn(op_code)?,
+            0xF => self.execute_fnnn(op_code, mem)?,
             _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)), // Impossible to reach
-        }
-        Ok(())
-    }
-
-    pub fn run( &mut self, mem: &mut Memory ) -> Result<(), Chip8Error> {
-
-        // Audio setup
-        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-        let sink = Sink::try_new(&stream_handle).unwrap();
-        let source = SineWave::new(SINEWAVE_FREQUENCY).repeat_infinite();
-        sink.append(source);
-        sink.pause();
-
-        // Display setup
-        let mut display_ctl = Display::new()?;
-
-        let mut last_update = Instant::now(); 
-
-        while display_ctl.window.is_open() {
-            // Fetch instruction
-            let instruction: u16 = mem.get_instruction(self.pc);
-
-            // Increment program counter
-            self.pc += 2; 
-
-            // Execute instruction
-            self.execute(instruction, mem, &mut display_ctl.window)?; 
-
-            // Delay between each instruction for more accurate timing
-            thread::sleep(Duration::from_millis(MS_DELAY)); 
-            
-            // Update display at 60hz
-            if last_update.elapsed() >= Duration::from_millis(DISPLAY_AND_TIMERS_UPDATE_FREQUENCY) {
-                display_ctl.update(&self.display)?;
-
-                if self.st > 0 { // Decrement sound timer at 60hz
-                    sink.play(); // Play sound when sound timer is greater than 0
-                    self.st -= 1;
-                } else {
-                    sink.pause(); // Pause sound when sound timer is 0
-                }
-
-                if self.dt > 0 { // Decrement delay timer at 60hz
-                    self.dt -= 1;
-                }
-
-                last_update = Instant::now();
-            }
         }
         Ok(())
     }
@@ -179,7 +171,7 @@ impl Chip8 {
             
             // 00E0 - CLS
             0x00e0 => { // Clear the display
-                self.display = [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH];
+                self.display.clear();
             }
             
             // NOP
@@ -346,46 +338,42 @@ impl Chip8 {
     }
 
     // Dxyn - DRW Vx, Vy, nibble
-    fn execute_dxyn( &mut self, op_code: OpCode, mem: &Memory) {  // Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision
+    fn execute_dxyn(&mut self, op_code: OpCode, mem: &Memory) { // Display n-byte sprite starting at memory location I at (Vx, Vy), set VF = collision
         let vx = op_code.vx();
         let vy = op_code.vy();
-        let height = op_code.nibble() as u16;
+        let height = op_code.nibble() as usize;
         self.v[FLAG_REGISTER] = 0; // Reset collision register
-
-        for offset in 0..height {
-            let sprite_byte = mem.read_byte(self.idx + offset as u16);
-            
-            for bit in 0..8 {
-                let pixel = (sprite_byte >> (7 - bit)) & 1 != 0;
-                let x = (self.v[vx] as usize + bit) % DISPLAY_WIDTH;
-                let y = (self.v[vy] as usize + offset as usize) % DISPLAY_HEIGHT;
-
-                if self.display[x][y] & pixel {
-                    self.v[FLAG_REGISTER] = 1; // Set collision flag
-                }
-
-                // XOR pixel
-                self.display[x][y] ^= pixel;
-            }
+        
+        // Read sprite from memory
+        let sprite = (0..height)
+            .map(|offset| mem.read_byte(self.idx + offset as u16));
+    
+        let x = self.v[vx] as usize;
+        let y = self.v[vy] as usize;
+    
+        let collision = self.display.draw(x, y, sprite);
+    
+        if collision {
+            self.v[FLAG_REGISTER] = 1; // Set collision flag
         }
     }
 
     // Ennn - Keyboard operations
-    fn execute_ennn( &mut self, op_code: OpCode, window: &Window) -> Result<(), Chip8Error> { 
+    fn execute_ennn( &mut self, op_code: OpCode) -> Result<(), Chip8Error> { 
         let vx = op_code.vx();
         if let Some(key) = self.bindings.get_by_value(self.v[vx]) {
             match op_code.byte() {
 
                 // Ex9E - SKP Vx
                 0x9e => { // Skip next instruction if key with the value of Vx is pressed
-                    if window.is_key_down(*key) {
+                    if self.display.is_key_down(*key) {
                         self.pc += 2;
                     }
                 },
 
                 // ExA1 - SKNP Vx
                 0xa1 => { // Skip next instruction if key with the value of Vx is not pressed
-                    if !window.is_key_down(*key) {
+                    if !self.display.is_key_down(*key) {
                         self.pc += 2;
                     }
                 },
@@ -396,7 +384,7 @@ impl Chip8 {
     }
 
     // Fnnn - Miscellaneous operations
-    fn execute_fnnn( &mut self, op_code: OpCode, mem: &mut Memory, window: &mut Window) -> Result<(), Chip8Error> { // Starts with F
+    fn execute_fnnn( &mut self, op_code: OpCode, mem: &mut Memory) -> Result<(), Chip8Error> { // Starts with F
         let vx = op_code.vx();
         match op_code.byte() {
 
@@ -410,20 +398,20 @@ impl Chip8 {
                 // Loop that will continue until a key press is detected
                 let mut key_pressed = None;
                 while key_pressed.is_none() {
-                    window.update();
+                    self.display.update_window();
             
                     // Check if any key pressed matches a mapped key
-                    if let Some(key) = window.get_keys_pressed(KeyRepeat::No)
+                    if let Some(key) = self.display.get_keys_pressed()
                                                 .iter().find_map(|&k| self.bindings.get_by_key(&k)) {
                         self.v[vx] = *key;
                         key_pressed = Some(*key);
                     }
             
                     // Sleep to reduce CPU usage while waiting for key press
-                    thread::sleep(Duration::from_millis(5));
+                    thread::sleep(Duration::from_millis(MS_DELAY));
             
                     // Handle window closing during wait
-                    if !window.is_open() {
+                    if !self.display.is_open() {
                         return Ok(());
                     }
                 }
@@ -474,6 +462,31 @@ impl Chip8 {
             _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
         }
         Ok(())
+    }
+
+    fn get_default_bindings() -> HashMap<u8, Key> {
+        let mut bindings = HashMap::new();
+        bindings.insert(0x0, Key::Key0); // Values 0 to F are mapped to keys 0 to F
+        bindings.insert(0x1, Key::Key1);
+        bindings.insert(0x2, Key::Key2);
+        bindings.insert(0x3, Key::Key3);
+        bindings.insert(0x4, Key::Key4);
+        bindings.insert(0x5, Key::Key5);
+        bindings.insert(0x6, Key::Key6);
+        bindings.insert(0x7, Key::Key7);
+        bindings.insert(0x8, Key::Key8);
+        bindings.insert(0x9, Key::Key9);
+        bindings.insert(0xa, Key::A);
+        bindings.insert(0xb, Key::B);
+        bindings.insert(0xc, Key::C);
+        bindings.insert(0xd, Key::D);
+        bindings.insert(0xe, Key::E);
+        bindings.insert(0xf, Key::F);
+        bindings
+    }
+
+    pub fn set_colors(&mut self, filled: u32, empty: u32) {
+        self.display.set_colors(filled, empty);
     }
 }
 

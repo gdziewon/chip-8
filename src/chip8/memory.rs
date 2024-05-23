@@ -56,22 +56,10 @@ impl Memory {
     
         ((high_byte as u16) << 8) | low_byte as u16
     }
-    
-    // Loads file from args
-    pub fn from(mut args: impl Iterator<Item = String>) -> Result<Self, Box<dyn Error>> {
-        match (args.next(), args.next()) {
-            (Some(_), Some(file_path)) => {
-                let mut memory = Memory::new();
-                memory.load(&file_path)?;
-                Ok(memory)
-            },
-            _ => Err(Box::new(Chip8Error::MissingFilePath))
-        }
-    }
 
     // Loads program from file
-    pub fn load(&mut self, file_path: &str) -> Result<(), Box<dyn Error>> {
-        let f = BufReader::new(File::open(file_path)?);
+    pub fn load(&mut self, file: &File) -> Result<(), Box<dyn Error>> {
+        let f = BufReader::new(file);
 
         for (i, byte) in f.bytes().enumerate() {
             let idx = PROGRAM_START as usize + i;
@@ -81,5 +69,17 @@ impl Memory {
             self.memory[idx] = byte?;
         }
         Ok(())
+    }
+
+    // Loads file from args - 2nd argument
+    pub fn from_args(mut args: impl Iterator<Item = String>) -> Result<Memory, Box<dyn Error>> {
+        match (args.next(), args.next()) {
+            (Some(_), Some(file_path)) => {
+                let mut memory = Memory::new();
+                memory.load(&File::open(file_path)?)?;
+                Ok(memory)
+            },
+            _ => Err(Box::new(Chip8Error::MissingFilePath))
+        }
     }
 }
