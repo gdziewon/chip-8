@@ -3,6 +3,9 @@ mod keys;
 pub mod memory;
 pub mod errors;
 
+#[cfg(test)]
+mod tests;
+
 pub use memory::Memory;
 use errors::Chip8Error;
 use display::Display;
@@ -10,7 +13,7 @@ use keys::Keys;
 
 use std::{collections::HashMap, thread, time::{Duration, Instant}};
 
-use rand::Rng;
+use rand;
 use minifb::{Key, Scale}; // GUI library
 use rodio::{OutputStream, Sink, source::{SineWave, Source}}; // Audio library
 
@@ -23,6 +26,7 @@ const WINDOW_NAME: &str = "Chip8 Emulator";
 // Memory
 pub const MEMORY_SIZE: usize = 1024 * 4;
 pub const PROGRAM_START: u16 = 0x200;
+const SPRITE_SIZE: u16 = 5;
 
 // Chip8 specifications
 const NUM_REGISTERS: usize = 16;
@@ -53,15 +57,28 @@ pub struct Chip8 {
 
     display: Display, // Display struct 
 
-    bindings: Keys, // Key bindings
+    keyboard: Keys, // Key bindings
+
+    audio: Sink, // Audio sink
 }
 
 
 impl Chip8 {
     // Creates a new Chip8 instance with the given key bindings
-    pub fn with(bindings: HashMap<u8, Key>) -> Self {
-        let bindings = Keys::new(bindings);
+    pub fn new() -> Self {
+        // Key bindings setup
+        let keyboard = Keys::get_default();
+
+        // Display setup
         let display = Display::new();
+
+        // Audio setup
+        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
+        let audio = Sink::try_new(&stream_handle).unwrap();
+        let source = SineWave::new(SINEWAVE_FREQUENCY).repeat_infinite();
+        audio.append(source);
+        audio.pause();
+
         Chip8 {
             v: [0x00; NUM_REGISTERS],
             idx: 0x0000,
@@ -71,25 +88,12 @@ impl Chip8 {
             sp: 0x00,
             stack: [0x0000; STACK_DEPTH],
             display,
-            bindings,
+            keyboard,
+            audio
         }
     }
 
-    // Creates a new Chip8 instance with default key bindings
-    pub fn new() -> Self {
-        let bindings = Chip8::get_default_bindings();
-        Self::with(bindings)
-    }
-
     pub fn run( &mut self, mem: &mut Memory ) -> Result<(), Chip8Error> {
-
-        // Audio setup
-        let (_stream, stream_handle) = OutputStream::try_default().unwrap();
-        let sink = Sink::try_new(&stream_handle).unwrap();
-        let source = SineWave::new(SINEWAVE_FREQUENCY).repeat_infinite();
-        sink.append(source);
-        sink.pause();
-
         // Open window
         self.display.init()?;
 
@@ -110,27 +114,25 @@ impl Chip8 {
             
             // Update timers and display at 60hz
             if last_update.elapsed() >= Duration::from_millis(DISPLAY_AND_TIMERS_UPDATE_FREQUENCY) {
-                self.update(&sink)?;
+                self.display.update()?;
+                self.update_timers();
                 last_update = Instant::now();
             }
         }
         Ok(())
     }
 
-    fn update(&mut self, sink: &Sink) -> Result<(), Chip8Error> {
-        self.display.update()?; // Update display
-
+    fn update_timers(&mut self) {
         if self.st > 0 { // Decrement sound timer at 60hz
-            sink.play(); // Play sound when sound timer is greater than 0
+            self.audio.play(); // Play sound when sound timer is greater than 0
             self.st -= 1;
         } else {
-            sink.pause(); // Pause sound when sound timer is 0
+            self.audio.pause(); // Pause sound when sound timer is 0
         }
 
         if self.dt > 0 { // Decrement delay timer at 60hz
             self.dt -= 1;
         }
-        Ok(())
     }
 
     // Executes given opcode dividing them by their first nibble
@@ -161,7 +163,7 @@ impl Chip8 {
     // 0x0nnn - System calls
     fn execute_0nnn( &mut self, op_code: OpCode) -> Result<(), Chip8Error>{
         match op_code.code {
-            // 0nnn - SYS addr is ignored by modern interpreters
+            // 0nnn - SYS addr - ignored by modern interpreters
 
             // 00EE - RET
             0x00ee => { // Return from a subroutine
@@ -242,7 +244,7 @@ impl Chip8 {
         self.v[vx] = self.v[vx].wrapping_add(data);
     }
 
-    // Starts with 8
+    // Starts with 8 - Arithmetic operations
     fn execute_8nnn( &mut self, op_code: OpCode) -> Result<(), Chip8Error> {
         let vx = op_code.vx();
         let vy = op_code.vy();
@@ -270,30 +272,33 @@ impl Chip8 {
             
             // 8xy4 - ADD Vx, Vy
             0x4 => { // Set Vx = Vx + Vy, set VF = carry
-                self.v[FLAG_REGISTER] = if self.v[vx] as u16 + self.v[vy] as u16 > 0xff { 1 } else { 0 };
-                self.v[vx] = self.v[vx].wrapping_add(self.v[vy]);
+                let (sum, carry) = self.v[vx].overflowing_add(self.v[vy]);
+                self.v[FLAG_REGISTER] = carry as u8;
+                self.v[vx] = sum;
             }
 
             // 8xy5 - SUB Vx, Vy
             0x5 => { // Set Vx = Vx - Vy, set VF = NOT borrow
-                self.v[FLAG_REGISTER] = if self.v[vx] >= self.v[vy] { 1 } else { 0 };
-                self.v[vx] = self.v[vx].wrapping_sub(self.v[vy]);
+                let (diff, borrow) = self.v[vx].overflowing_sub(self.v[vy]);
+                self.v[FLAG_REGISTER] = (!borrow) as u8;
+                self.v[vx] = diff;
             }
 
             // 8xy6 - SHR Vx {, Vy}
-            0x6 => { // Set Vx = Vx SHR 1
+            0x6 => { // Set Vx = Vx SHR 1, set VF = LSb of Vx
                 self.v[FLAG_REGISTER] = self.v[vx] & 1;
                 self.v[vx] >>= 1;
             }
             
             // 8xy7 - SUBN Vx, Vy
             0x7 => { // Set Vx = Vy - Vx, set VF = NOT borrow
-                self.v[FLAG_REGISTER] = if self.v[vy] >= self.v[vx] { 1 } else { 0 };
-                self.v[vx] = self.v[vy].wrapping_sub(self.v[vx]);
+                let (diff, borrow) = self.v[vy].overflowing_sub(self.v[vx]);
+                self.v[FLAG_REGISTER] = (!borrow) as u8;
+                self.v[vx] = diff;
             }
 
             // 8xyE - SHL Vx {, Vy}
-            0xe => { // Set Vx = Vx SHL 1
+            0xe => { // Set Vx = Vx SHL 1, set VF = MSB of Vx
                 self.v[FLAG_REGISTER] = self.v[vx] >> 7;
                 self.v[vx] <<= 1;
             }
@@ -333,7 +338,7 @@ impl Chip8 {
     fn execute_cxkk( &mut self, op_code: OpCode) { // Set Vx = random byte AND kk
         let vx = op_code.vx();
         let data = op_code.byte();
-        let rnd: u8 = rand::thread_rng().gen();
+        let rnd: u8 = rand::random();
         self.v[vx] = data & rnd;
     }
 
@@ -342,7 +347,6 @@ impl Chip8 {
         let vx = op_code.vx();
         let vy = op_code.vy();
         let height = op_code.nibble() as usize;
-        self.v[FLAG_REGISTER] = 0; // Reset collision register
         
         // Read sprite from memory
         let sprite = (0..height)
@@ -350,18 +354,15 @@ impl Chip8 {
     
         let x = self.v[vx] as usize;
         let y = self.v[vy] as usize;
-    
-        let collision = self.display.draw(x, y, sprite);
-    
-        if collision {
-            self.v[FLAG_REGISTER] = 1; // Set collision flag
-        }
+        
+        // Draw sprite and set collision flag
+        self.v[FLAG_REGISTER] = self.display.draw(x, y, sprite) as u8; 
     }
 
     // Ennn - Keyboard operations
     fn execute_ennn( &mut self, op_code: OpCode) -> Result<(), Chip8Error> { 
         let vx = op_code.vx();
-        if let Some(key) = self.bindings.get_by_value(self.v[vx]) {
+        if let Some(key) = self.keyboard.get_by_value(self.v[vx]) {
             match op_code.byte() {
 
                 // Ex9E - SKP Vx
@@ -396,15 +397,13 @@ impl Chip8 {
             // Fx0A - LD Vx, K
             0x0a => {  // Wait for a key press, store the value of the key in Vx
                 // Loop that will continue until a key press is detected
-                let mut key_pressed = None;
-                while key_pressed.is_none() {
-                    self.display.update_window();
+                loop {
+                    self.display.update()?; // Update display
             
-                    // Check if any key pressed matches a mapped key
-                    if let Some(key) = self.display.get_keys_pressed()
-                                                .iter().find_map(|&k| self.bindings.get_by_key(&k)) {
-                        self.v[vx] = *key;
-                        key_pressed = Some(*key);
+                    // Check if a key is pressed
+                    if let Some(key) = self.display.get_key_press(&self.keyboard) {
+                        self.v[vx] = key;
+                        return Ok(());
                     }
             
                     // Sleep to reduce CPU usage while waiting for key press
@@ -434,7 +433,7 @@ impl Chip8 {
 
             // Fx29 - LD F, Vx
             0x29 => { // Set I = location of sprite for digit Vx
-                self.idx = self.v[vx] as u16 * 5;
+                self.idx = self.v[vx] as u16 * SPRITE_SIZE; // Each sprite is 5 bytes long from 0x00 to 0x4F
             }
 
             // Fx33 - LD B, Vx
@@ -446,7 +445,7 @@ impl Chip8 {
 
             // Fx55 - LD [I], Vx
             0x55 => { // Store registers V0 through Vx in memory starting at location I
-                for i in 0..vx {
+                for i in 0..=vx {
                     mem.write_byte(self.idx + i as u16, self.v[i]);
                 }
                 self.idx += vx as u16 + 1;
@@ -454,7 +453,7 @@ impl Chip8 {
 
             // Fx65 - LD Vx, [I]
             0x65 => { // Read registers V0 through Vx from memory starting at location I
-                for i in 0..vx {
+                for i in 0..=vx {
                     self.v[i] = mem.read_byte(self.idx + i as u16);
                 }
                 self.idx += vx as u16 + 1;
@@ -464,29 +463,20 @@ impl Chip8 {
         Ok(())
     }
 
-    fn get_default_bindings() -> HashMap<u8, Key> {
-        let mut bindings = HashMap::new();
-        bindings.insert(0x0, Key::Key0); // Values 0 to F are mapped to keys 0 to F
-        bindings.insert(0x1, Key::Key1);
-        bindings.insert(0x2, Key::Key2);
-        bindings.insert(0x3, Key::Key3);
-        bindings.insert(0x4, Key::Key4);
-        bindings.insert(0x5, Key::Key5);
-        bindings.insert(0x6, Key::Key6);
-        bindings.insert(0x7, Key::Key7);
-        bindings.insert(0x8, Key::Key8);
-        bindings.insert(0x9, Key::Key9);
-        bindings.insert(0xa, Key::A);
-        bindings.insert(0xb, Key::B);
-        bindings.insert(0xc, Key::C);
-        bindings.insert(0xd, Key::D);
-        bindings.insert(0xe, Key::E);
-        bindings.insert(0xf, Key::F);
-        bindings
-    }
-
     pub fn set_colors(&mut self, filled: u32, empty: u32) {
         self.display.set_colors(filled, empty);
+    }
+
+    pub fn with_bindings(&mut self, bindings: HashMap<u8, Key>) {
+        self.keyboard = Keys::from(bindings);
+    }
+
+    pub fn insert_binding(&mut self, key: u8, value: Key) {
+        self.keyboard.insert(key, value);
+    }
+
+    pub fn set_scale(&mut self, scale: Scale) {
+        self.display.set_scale(scale);
     }
 }
 
