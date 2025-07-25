@@ -42,7 +42,7 @@ const MS_DELAY: u64 = 1;
 // Display and timers update frequency
 pub const DISPLAY_AND_TIMERS_UPDATE_FREQUENCY: u64 = 1000 / 60; // 60hz
 
-pub struct Chip8 {
+pub struct CPU {
     // Registers
     v: [u8; NUM_REGISTERS], // 16 general purpose 8-bit registers
     idx: u16, // 16-bit address register
@@ -54,6 +54,10 @@ pub struct Chip8 {
     pc: u16, // Program counter
     sp: u8, // Stack pointer
     stack: [u16; STACK_DEPTH], // 16 16-bit stack fields
+}
+
+pub struct Chip8 {
+    cpu: CPU,
 
     display: Display, // Display struct 
 
@@ -79,14 +83,16 @@ impl Chip8 {
         audio.append(source);
         audio.pause();
 
-        Chip8 {
-            v: [0x00; NUM_REGISTERS],
+        let cpu = CPU{ v: [0x00; NUM_REGISTERS],
             idx: 0x0000,
             dt: 0,
             st: 0,
             pc: PROGRAM_START,
             sp: 0x00,
-            stack: [0x0000; STACK_DEPTH],
+            stack: [0x0000; STACK_DEPTH]};
+
+        Chip8 {
+            cpu,
             display,
             keyboard,
             audio
@@ -101,10 +107,10 @@ impl Chip8 {
 
         while self.display.is_open() {
             // Fetch instruction
-            let instruction: u16 = mem.get_instruction(self.pc);
+            let instruction: u16 = mem.get_instruction(self.cpu.pc);
 
             // Increment program counter
-            self.pc += 2; 
+            self.cpu.pc += 2; 
 
             // Execute instruction
             self.execute(instruction, mem)?; 
@@ -123,16 +129,16 @@ impl Chip8 {
     }
 
     fn update_timers(&mut self) {
-        if self.st > 0 { // Decrement sound timer at 60hz
+        if self.cpu.st > 0 { // Decrement sound timer at 60hz
             self.audio.play(); // Play sound when sound timer is greater than 0
-            self.st -= 1;
+            self.cpu.st -= 1;
         } else {
             self.audio.pause(); // Pause sound when sound timer is 0
         }
 
-        if self.dt > 0 { // Decrement delay timer at 60hz
-            self.dt -= 1;
-        }
+        // if self.cpu.st > 0 { // Decrement delay timer at 60hz
+        //     self.cpu.st -= 1;
+        // }
     }
 
     // Executes given opcode dividing them by their first nibble
@@ -155,7 +161,7 @@ impl Chip8 {
             0xD => self.execute_dxyn(op_code, &mem),
             0xE => self.execute_ennn(op_code)?,
             0xF => self.execute_fnnn(op_code, mem)?,
-            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)), // Impossible to reach
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.cpu.pc - 2)), // Impossible to reach
         }
         Ok(())
     }
@@ -167,8 +173,8 @@ impl Chip8 {
 
             // 00EE - RET
             0x00ee => { // Return from a subroutine
-                self.pc = self.stack[self.sp as usize];
-                self.sp -= 1;
+                self.cpu.pc = self.cpu.stack[self.cpu.sp as usize];
+                self.cpu.sp -= 1;
             }
             
             // 00E0 - CLS
@@ -178,7 +184,7 @@ impl Chip8 {
             
             // NOP
             0x0000 => (), // Do nothing
-            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.cpu.pc - 2)),
         }
         Ok(())
     }
@@ -186,23 +192,23 @@ impl Chip8 {
     // 1nnn - JP addr
     fn execute_1nnn( &mut self, op_code: OpCode) { // Jump to location nnn
         let addr = op_code.addr();
-        self.pc = addr;
+        self.cpu.pc = addr;
     }
 
     // 2nnn - CALL addr
     fn execute_2nnn( &mut self, op_code: OpCode) { // Call subroutine at nnn
-        self.sp += 1;
-        self.stack[self.sp as usize] = self.pc;
+        self.cpu.sp += 1;
+        self.cpu.stack[self.cpu.sp as usize] = self.cpu.pc;
         let addr = op_code.addr();
-        self.pc = addr;
+        self.cpu.pc = addr;
     }
 
     // 3xkk - SE Vx, byte
     fn execute_3xkk( &mut self, op_code: OpCode) { // Skip next instruction if Vx = kk
         let vx = op_code.vx();
         let data = op_code.byte();
-        if self.v[vx] == data {
-            self.pc += 2;
+        if self.cpu.v[vx] == data {
+            self.cpu.pc += 2;
         }
     }
 
@@ -210,8 +216,8 @@ impl Chip8 {
     fn execute_4xkk( &mut self, op_code: OpCode) { // Skip next instruction if Vx != kk
         let vx = op_code.vx();
         let data = op_code.byte();
-        if self.v[vx] != data {
-            self.pc += 2;
+        if self.cpu.v[vx] != data {
+            self.cpu.pc += 2;
         }
     }
 
@@ -219,13 +225,13 @@ impl Chip8 {
     fn execute_5xy0( &mut self, op_code: OpCode) -> Result<(), Chip8Error>{ // Skip next instruction if Vx = Vy
         // Check if last nibble is 0, if not, it's an invalid opcode
         if op_code.nibble() != 0x0 { 
-            return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2));
+            return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.cpu.pc - 2));
         }
 
         let vx = op_code.vx(); 
         let vy = op_code.vy();
-        if self.v[vx] == self.v[vy] {
-            self.pc += 2;
+        if self.cpu.v[vx] == self.cpu.v[vy] {
+            self.cpu.pc += 2;
         }
         Ok(())
     }
@@ -234,14 +240,14 @@ impl Chip8 {
     fn execute_6xkk( &mut self, op_code: OpCode) { // Set Vx = kk
         let vx = op_code.vx();
         let data = op_code.byte();
-        self.v[vx] = data;
+        self.cpu.v[vx] = data;
     }
 
     // 7xkk - ADD Vx, byte
     fn execute_7xkk( &mut self, op_code: OpCode) { // Set Vx = Vx + kk
         let vx = op_code.vx();
         let data = op_code.byte();
-        self.v[vx] = self.v[vx].wrapping_add(data);
+        self.cpu.v[vx] = self.cpu.v[vx].wrapping_add(data);
     }
 
     // Starts with 8 - Arithmetic operations
@@ -252,57 +258,57 @@ impl Chip8 {
             
             // 8xy0 - LD Vx, Vy
             0x0 => { // Set Vx = Vy
-                self.v[vx] = self.v[vy];
+                self.cpu.v[vx] = self.cpu.v[vy];
             }
             
             // 8xy1 - OR Vx, Vy
             0x1 => { // Set Vx = Vx OR Vy
-                self.v[vx] |= self.v[vy];
+                self.cpu.v[vx] |= self.cpu.v[vy];
             }
             
             // 8xy2 - AND Vx, Vy
             0x2 => { // Set Vx = Vx AND Vy
-                self.v[vx] &= self.v[vy];
+                self.cpu.v[vx] &= self.cpu.v[vy];
             } 
             
             // 8xy3 - XOR Vx, Vy
             0x3 => { // Set Vx = Vx XOR Vy
-                self.v[vx] ^= self.v[vy];
+                self.cpu.v[vx] ^= self.cpu.v[vy];
             }
             
             // 8xy4 - ADD Vx, Vy
             0x4 => { // Set Vx = Vx + Vy, set VF = carry
-                let (sum, carry) = self.v[vx].overflowing_add(self.v[vy]);
-                self.v[FLAG_REGISTER] = carry as u8;
-                self.v[vx] = sum;
+                let (sum, carry) = self.cpu.v[vx].overflowing_add(self.cpu.v[vy]);
+                self.cpu.v[FLAG_REGISTER] = carry as u8;
+                self.cpu.v[vx] = sum;
             }
 
             // 8xy5 - SUB Vx, Vy
             0x5 => { // Set Vx = Vx - Vy, set VF = NOT borrow
-                let (diff, borrow) = self.v[vx].overflowing_sub(self.v[vy]);
-                self.v[FLAG_REGISTER] = (!borrow) as u8;
-                self.v[vx] = diff;
+                let (diff, borrow) = self.cpu.v[vx].overflowing_sub(self.cpu.v[vy]);
+                self.cpu.v[FLAG_REGISTER] = (!borrow) as u8;
+                self.cpu.v[vx] = diff;
             }
 
             // 8xy6 - SHR Vx {, Vy}
             0x6 => { // Set Vx = Vx SHR 1, set VF = LSb of Vx
-                self.v[FLAG_REGISTER] = self.v[vx] & 1;
-                self.v[vx] >>= 1;
+                self.cpu.v[FLAG_REGISTER] = self.cpu.v[vx] & 1;
+                self.cpu.v[vx] >>= 1;
             }
             
             // 8xy7 - SUBN Vx, Vy
             0x7 => { // Set Vx = Vy - Vx, set VF = NOT borrow
-                let (diff, borrow) = self.v[vy].overflowing_sub(self.v[vx]);
-                self.v[FLAG_REGISTER] = (!borrow) as u8;
-                self.v[vx] = diff;
+                let (diff, borrow) = self.cpu.v[vy].overflowing_sub(self.cpu.v[vx]);
+                self.cpu.v[FLAG_REGISTER] = (!borrow) as u8;
+                self.cpu.v[vx] = diff;
             }
 
             // 8xyE - SHL Vx {, Vy}
             0xe => { // Set Vx = Vx SHL 1, set VF = MSB of Vx
-                self.v[FLAG_REGISTER] = self.v[vx] >> 7;
-                self.v[vx] <<= 1;
+                self.cpu.v[FLAG_REGISTER] = self.cpu.v[vx] >> 7;
+                self.cpu.v[vx] <<= 1;
             }
-            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.cpu.pc - 2)),
         }
         Ok(())
     }
@@ -311,13 +317,13 @@ impl Chip8 {
     fn execute_9xy0( &mut self, op_code: OpCode) -> Result<(), Chip8Error> { // Skip next instruction if Vx != Vy
         // Check if last nibble is 0, if not, it's an invalid opcode
         if op_code.nibble() != 0x0 { 
-            return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2));
+            return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.cpu.pc - 2));
         }
  
         let vx = op_code.vx();
         let vy = op_code.vy();
-        if self.v[vx] != self.v[vy] {
-            self.pc += 2;
+        if self.cpu.v[vx] != self.cpu.v[vy] {
+            self.cpu.pc += 2;
         }
         Ok(())
     }
@@ -325,13 +331,13 @@ impl Chip8 {
      // Annn - LD I, addr
     fn execute_annn( &mut self, op_code: OpCode) { // Set I = nnn
         let addr = op_code.addr();
-        self.idx = addr;
+        self.cpu.idx = addr;
     }
 
     // Bnnn - JP V0, addr
     fn execute_bnnn( &mut self, op_code: OpCode) { // Jump to location nnn + V0
         let addr = op_code.addr();
-        self.pc = addr + self.v[0] as u16;
+        self.cpu.pc = addr + self.cpu.v[0] as u16;
     }
 
     // Cxkk - RND Vx, byte
@@ -339,7 +345,7 @@ impl Chip8 {
         let vx = op_code.vx();
         let data = op_code.byte();
         let rnd: u8 = rand::random();
-        self.v[vx] = data & rnd;
+        self.cpu.v[vx] = data & rnd;
     }
 
     // Dxyn - DRW Vx, Vy, nibble
@@ -350,35 +356,35 @@ impl Chip8 {
         
         // Read sprite from memory
         let sprite = (0..height)
-            .map(|offset| mem.read_byte(self.idx + offset as u16));
+            .map(|offset| mem.read_byte(self.cpu.idx + offset as u16));
     
-        let x = self.v[vx] as usize;
-        let y = self.v[vy] as usize;
+        let x = self.cpu.v[vx] as usize;
+        let y = self.cpu.v[vy] as usize;
         
         // Draw sprite and set collision flag
-        self.v[FLAG_REGISTER] = self.display.draw(x, y, sprite) as u8; 
+        self.cpu.v[FLAG_REGISTER] = self.display.draw(x, y, sprite) as u8; 
     }
 
     // Ennn - Keyboard operations
     fn execute_ennn( &mut self, op_code: OpCode) -> Result<(), Chip8Error> { 
         let vx = op_code.vx();
-        if let Some(key) = self.keyboard.get_by_value(self.v[vx]) {
+        if let Some(key) = self.keyboard.get_by_value(self.cpu.v[vx]) {
             match op_code.byte() {
 
                 // Ex9E - SKP Vx
                 0x9e => { // Skip next instruction if key with the value of Vx is pressed
                     if self.display.is_key_down(*key) {
-                        self.pc += 2;
+                        self.cpu.pc += 2;
                     }
                 },
 
                 // ExA1 - SKNP Vx
                 0xa1 => { // Skip next instruction if key with the value of Vx is not pressed
                     if !self.display.is_key_down(*key) {
-                        self.pc += 2;
+                        self.cpu.pc += 2;
                     }
                 },
-                _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
+                _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.cpu.pc - 2)),
             }
         }
         Ok(())
@@ -391,7 +397,7 @@ impl Chip8 {
 
             // Fx07 - LD Vx, DT
             0x07 => { // Set Vx = delay timer value
-                self.v[vx] = self.dt;
+                self.cpu.v[vx] = self.cpu.dt;
             }
             
             // Fx0A - LD Vx, K
@@ -402,7 +408,7 @@ impl Chip8 {
             
                     // Check if a key is pressed
                     if let Some(key) = self.display.get_key_press(&self.keyboard) {
-                        self.v[vx] = key;
+                        self.cpu.v[vx] = key;
                         return Ok(());
                     }
             
@@ -418,47 +424,47 @@ impl Chip8 {
 
             // Fx15 - LD DT, Vx
             0x15 => { // Set delay timer = Vx
-                self.dt = self.v[vx];
+                self.cpu.dt = self.cpu.v[vx];
             }
             
             // Fx18 - LD ST, Vx
             0x18 => { // Set sound timer = Vx
-                self.st = self.v[vx];
+                self.cpu.st = self.cpu.v[vx];
             }
 
             // Fx1E - ADD I, Vx
             0x1e => { // Set I = I + Vx
-                self.idx += self.v[vx] as u16;
+                self.cpu.idx += self.cpu.v[vx] as u16;
             }
 
             // Fx29 - LD F, Vx
             0x29 => { // Set I = location of sprite for digit Vx
-                self.idx = self.v[vx] as u16 * SPRITE_SIZE; // Each sprite is 5 bytes long from 0x00 to 0x4F
+                self.cpu.idx = self.cpu.v[vx] as u16 * SPRITE_SIZE; // Each sprite is 5 bytes long from 0x00 to 0x4F
             }
 
             // Fx33 - LD B, Vx
             0x33 => { // Store BCD representation of Vx in memory locations I, I+1, I+2
-                mem.write_byte(self.idx, self.v[vx] / 100);
-                mem.write_byte(self.idx + 1, (self.v[vx] % 100) / 10);
-                mem.write_byte(self.idx + 2, self.v[vx] % 10);
+                mem.write_byte(self.cpu.idx, self.cpu.v[vx] / 100);
+                mem.write_byte(self.cpu.idx + 1, (self.cpu.v[vx] % 100) / 10);
+                mem.write_byte(self.cpu.idx + 2, self.cpu.v[vx] % 10);
             }
 
             // Fx55 - LD [I], Vx
             0x55 => { // Store registers V0 through Vx in memory starting at location I
                 for i in 0..=vx {
-                    mem.write_byte(self.idx + i as u16, self.v[i]);
+                    mem.write_byte(self.cpu.idx + i as u16, self.cpu.v[i]);
                 }
-                self.idx += vx as u16 + 1;
+                self.cpu.idx += vx as u16 + 1;
             }
 
             // Fx65 - LD Vx, [I]
             0x65 => { // Read registers V0 through Vx from memory starting at location I
                 for i in 0..=vx {
-                    self.v[i] = mem.read_byte(self.idx + i as u16);
+                    self.cpu.v[i] = mem.read_byte(self.cpu.idx + i as u16);
                 }
-                self.idx += vx as u16 + 1;
+                self.cpu.idx += vx as u16 + 1;
             }
-            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.pc - 2)),
+            _ => return Err(Chip8Error::UnrecognizedOpcode(op_code.code, self.cpu.pc - 2)),
         }
         Ok(())
     }

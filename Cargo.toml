@@ -7,5 +7,5 @@ edition = "2021"
 
 [dependencies]
 rand = "0.8.5"
-minifb = "0.27"
-rodio = "0.18.0"
+minifb = { version = "0.28", default-features = false, features = ["x11"] }
+rodio = "0.20.1"
