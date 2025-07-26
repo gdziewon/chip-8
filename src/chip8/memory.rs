@@ -43,7 +43,7 @@ impl Memory {
     pub fn read_byte(&self, addr: u16) -> u8 {
         self.memory[addr as usize]
     }
-    
+
     // Same here
     pub fn write_byte(&mut self, addr: u16, data: u8) {
         self.memory[addr as usize] = data;
@@ -53,7 +53,7 @@ impl Memory {
     pub fn get_instruction(&self, addr: u16) -> u16 {
         let high_byte = self.read_byte(addr);
         let low_byte = self.read_byte(addr + 1);
-    
+
         ((high_byte as u16) << 8) | low_byte as u16
     }
 

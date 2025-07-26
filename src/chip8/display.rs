@@ -18,7 +18,7 @@ impl Display {
             filled: 0xffffff,
             empty: 0x000000
         };
-    
+
         Display { grid, buffer, window: None, colors, scale: DISPLAY_SCALE }
     }
 
@@ -66,17 +66,17 @@ impl Display {
         self.colors.filled = filled;
         self.colors.empty = empty;
     }
-    
+
     // Update the display
     pub(super) fn update(&mut self) -> Result<(), Chip8Error>{
         // Draw a grid
         self.update_buffer();
-        
+
         // Update the window with buffer
         self.window.as_mut().unwrap()
             .update_with_buffer(&self.buffer, DISPLAY_WIDTH, DISPLAY_HEIGHT)
             .map_err(Chip8Error::WindowUpdateError)
-    
+
     }
 
     // Clear the display
@@ -127,7 +127,7 @@ impl Display {
         }
     }
 
-    
+
 }
 
 struct Colors {
