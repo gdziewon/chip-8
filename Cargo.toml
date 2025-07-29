@@ -10,3 +10,4 @@ rand = "0.8.5"
 minifb = { version = "0.28", default-features = false, features = ["x11"] }
 rodio = "0.20.1"
 modular-bitfield = "0.12.0"
+clap = {version = "4.5.41", features = ["derive"]}

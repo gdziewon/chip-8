@@ -1,25 +1,25 @@
-use chip8::{Chip8, Memory};
-use minifb::Key;
+use chip8::Chip8;
+use std::fs::File;
 use std::process;
-use std::env;
+use clap::Parser;
+use std::path::PathBuf;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    path: PathBuf
+}
 
 fn main() {
-    let mut chip8 = Chip8::new();
+    let args = Args::parse();
+    let program = &File::open(args.path).unwrap();
 
+    let mut chip8 = Chip8::new();
+    chip8.load_program(program).unwrap();
     chip8.set_colors(0x800080, 0xffc0cb); // purple and pink
-    chip8.insert_binding(0x2, Key::W);
-    chip8.insert_binding(0x4, Key::A);
-    chip8.insert_binding(0x6, Key::D);
-    chip8.insert_binding(0x8, Key::S);
-        
-    let mut mem = Memory::from_args(env::args()).unwrap_or_else(|err| {
-        eprintln!("Error while creating memory: {err}");
-        process::exit(1);
-    });
-    
-    if let Err(e) = chip8.run(&mut mem) {
+
+    if let Err(e) = chip8.run() {
         eprintln!("Error while running chip8: {e}");
         process::exit(1);
     }
 }
- 

@@ -31,7 +31,7 @@ impl Keys {
     pub fn get_by_key(&self, key: &Key) -> Option<&u8> {
         self.right.get(key)
     }
-    
+
     pub fn get_by_value(&self, value: u8) -> Option<&Key> {
         self.left.get(&value)
     }

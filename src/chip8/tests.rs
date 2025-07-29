@@ -48,20 +48,20 @@ use super::*;
     #[test]
     fn test_chip8_run() {
         let (mut chip8, mut mem) = setup_chip8_and_memory();
-        mem.write_byte(PROGRAM_START, 0x60); 
-        mem.write_byte(PROGRAM_START + 1, 0x00); 
-        mem.write_byte(PROGRAM_START + 2, 0xFF); 
+        mem.write_byte(PROGRAM_START, 0x60);
+        mem.write_byte(PROGRAM_START + 1, 0x00);
+        mem.write_byte(PROGRAM_START + 2, 0xFF);
         let result = chip8.run(&mut mem);
-        assert!(result.is_err()); 
+        assert!(result.is_err());
         assert_eq!(chip8.cpu.v[0], 0x00);
     }
 
     #[test]
     fn test_chip8_update() {
         let mut chip8 = Chip8::new();
-        chip8.cpu.st = 5; 
+        chip8.cpu.st = 5;
         chip8.update_timers();
-        assert_eq!(chip8.cpu.st, 4); 
+        assert_eq!(chip8.cpu.st, 4);
     }
 
     mod opcode_tests {
@@ -139,25 +139,25 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x01;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x5010, &mut mem); 
+            let result = chip8.execute(0x5010, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.pc, PROGRAM_START + 2); 
+            assert_eq!(chip8.cpu.pc, PROGRAM_START + 2);
         }
 
         #[test]
         fn test_chip8_execute_6xkk() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
-            let result = chip8.execute(0x6001, &mut mem); 
+            let result = chip8.execute(0x6001, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x01);
         }
 
         #[test]
         fn test_chip8_execute_7xkk() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
-            let result = chip8.execute(0x7001, &mut mem); 
+            let result = chip8.execute(0x7001, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x01);
         }
 
         #[test]
@@ -165,9 +165,9 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x0F;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8010, &mut mem); 
+            let result = chip8.execute(0x8010, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], chip8.cpu.v[1]); 
+            assert_eq!(chip8.cpu.v[0], chip8.cpu.v[1]);
         }
 
         #[test]
@@ -175,9 +175,9 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x0F;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8011, &mut mem); 
+            let result = chip8.execute(0x8011, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x0F | 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x0F | 0x01);
         }
 
         #[test]
@@ -185,9 +185,9 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x0F;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8012, &mut mem); 
+            let result = chip8.execute(0x8012, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x0F & 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x0F & 0x01);
         }
 
         #[test]
@@ -195,9 +195,9 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x0F;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8013, &mut mem); 
+            let result = chip8.execute(0x8013, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x0F ^ 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x0F ^ 0x01);
         }
 
         #[test]
@@ -205,10 +205,10 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x0F;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8014, &mut mem); 
+            let result = chip8.execute(0x8014, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x0F + 0x01); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00); 
+            assert_eq!(chip8.cpu.v[0], 0x0F + 0x01);
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00);
         }
 
         #[test]
@@ -216,10 +216,10 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0xFF;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8014, &mut mem); 
+            let result = chip8.execute(0x8014, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0xFFu8.wrapping_add(0x01)); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0xFFu8.wrapping_add(0x01));
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01);
         }
 
         #[test]
@@ -227,10 +227,10 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x0F;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8015, &mut mem); 
+            let result = chip8.execute(0x8015, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x0F - 0x01); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x0F - 0x01);
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01);
         }
 
         #[test]
@@ -238,30 +238,30 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x00;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8015, &mut mem); 
+            let result = chip8.execute(0x8015, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x00u8.wrapping_sub(0x01)); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00); 
+            assert_eq!(chip8.cpu.v[0], 0x00u8.wrapping_sub(0x01));
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00);
         }
 
         #[test]
         fn test_chip8_execute_8xy6_even() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x20;
-            let result = chip8.execute(0x8006, &mut mem); 
+            let result = chip8.execute(0x8006, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x10); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00); 
+            assert_eq!(chip8.cpu.v[0], 0x10);
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00);
         }
 
         #[test]
         fn test_chip8_execute_8xy6_odd() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x21;
-            let result = chip8.execute(0x8006, &mut mem); 
+            let result = chip8.execute(0x8006, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x10); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x10);
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01);
         }
 
         #[test]
@@ -269,10 +269,10 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x01;
             chip8.cpu.v[1] = 0x0F;
-            let result = chip8.execute(0x8017, &mut mem); 
+            let result = chip8.execute(0x8017, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x0F - 0x01); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x0F - 0x01);
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01);
         }
 
         #[test]
@@ -280,30 +280,30 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x0F;
             chip8.cpu.v[1] = 0x01;
-            let result = chip8.execute(0x8017, &mut mem); 
+            let result = chip8.execute(0x8017, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x01u8.wrapping_sub(0x0F)); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00); 
+            assert_eq!(chip8.cpu.v[0], 0x01u8.wrapping_sub(0x0F));
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00);
         }
 
         #[test]
         fn test_chip8_execute_8xye_no_carry() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x20;
-            let result = chip8.execute(0x800e, &mut mem); 
+            let result = chip8.execute(0x800e, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x40); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00); 
+            assert_eq!(chip8.cpu.v[0], 0x40);
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00);
         }
 
         #[test]
         fn test_chip8_execute_8xye_carry() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x81;
-            let result = chip8.execute(0x800e, &mut mem); 
+            let result = chip8.execute(0x800e, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x02); 
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01); 
+            assert_eq!(chip8.cpu.v[0], 0x02);
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01);
         }
 
         #[test]
@@ -311,51 +311,51 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x01;
             chip8.cpu.v[1] = 0x02;
-            let result = chip8.execute(0x9010, &mut mem); 
+            let result = chip8.execute(0x9010, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.pc, PROGRAM_START + 2); 
+            assert_eq!(chip8.cpu.pc, PROGRAM_START + 2);
         }
 
         #[test]
         fn test_chip8_execute_annn() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
-            let result = chip8.execute(0xA123, &mut mem); 
+            let result = chip8.execute(0xA123, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.idx, 0x0123); 
+            assert_eq!(chip8.cpu.idx, 0x0123);
         }
 
         #[test]
         fn test_chip8_execute_bnnn() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x01;
-            let result = chip8.execute(0xB123, &mut mem); 
+            let result = chip8.execute(0xB123, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.pc, 0x0123 + 0x01); 
+            assert_eq!(chip8.cpu.pc, 0x0123 + 0x01);
         }
 
         #[test]
         fn test_chip8_execute_cxkk() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
-            let result = chip8.execute(0xC0FF, &mut mem); 
+            let result = chip8.execute(0xC0FF, &mut mem);
             assert!(result.is_ok());
-            assert_ne!(chip8.cpu.v[0], 0x00); 
+            assert_ne!(chip8.cpu.v[0], 0x00);
         }
 
         #[test]
         fn test_chip8_execute_dxyn_no_collision() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
-            let result = chip8.execute(0xD005, &mut mem); 
+            let result = chip8.execute(0xD005, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00); 
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x00);
         }
 
         #[test]
         fn test_chip8_execute_dxyn_collision() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.display.draw(0, 0, (0..5).map(|_| 0xFF));
-            let result = chip8.execute(0xD005, &mut mem); 
+            let result = chip8.execute(0xD005, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01); 
+            assert_eq!(chip8.cpu.v[FLAG_REGISTER], 0x01);
         }
 
         #[test]
@@ -363,9 +363,9 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x01;
             let _ = chip8.display.init();
-            let result = chip8.execute(0xE09E, &mut mem); 
+            let result = chip8.execute(0xE09E, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.pc, PROGRAM_START); 
+            assert_eq!(chip8.cpu.pc, PROGRAM_START);
         }
 
         #[test]
@@ -373,36 +373,36 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x01;
             let _ = chip8.display.init();
-            let result = chip8.execute(0xE0A1, &mut mem); 
+            let result = chip8.execute(0xE0A1, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.pc, PROGRAM_START + 2); 
+            assert_eq!(chip8.cpu.pc, PROGRAM_START + 2);
         }
 
         #[test]
         fn test_chip8_execute_fx07() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.dt = 0x05;
-            let result = chip8.execute(0xF007, &mut mem); 
+            let result = chip8.execute(0xF007, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x05); 
+            assert_eq!(chip8.cpu.v[0], 0x05);
         }
 
         #[test]
         fn test_chip8_execute_fx15() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x05;
-            let result = chip8.execute(0xF015, &mut mem); 
+            let result = chip8.execute(0xF015, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.dt, 0x05); 
+            assert_eq!(chip8.cpu.dt, 0x05);
         }
 
         #[test]
         fn test_chip8_execute_fx18() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x05;
-            let result = chip8.execute(0xF018, &mut mem); 
+            let result = chip8.execute(0xF018, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.st, 0x05); 
+            assert_eq!(chip8.cpu.st, 0x05);
         }
 
         #[test]
@@ -410,18 +410,18 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.idx = 0x05;
             chip8.cpu.v[0] = 0x05;
-            let result = chip8.execute(0xF01E, &mut mem); 
+            let result = chip8.execute(0xF01E, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.idx, 0x0A); 
+            assert_eq!(chip8.cpu.idx, 0x0A);
         }
 
         #[test]
         fn test_chip8_execute_fx29() {
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.v[0] = 0x05;
-            let result = chip8.execute(0xF029, &mut mem); 
+            let result = chip8.execute(0xF029, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.idx, 0x05 * SPRITE_SIZE as u16); 
+            assert_eq!(chip8.cpu.idx, 0x05 * SPRITE_SIZE as u16);
         }
 
         #[test]
@@ -429,11 +429,11 @@ use super::*;
             let (mut chip8, mut mem) = setup_chip8_and_memory();
             chip8.cpu.idx = 0x05;
             chip8.cpu.v[0] = 123;
-            let result = chip8.execute(0xF033, &mut mem); 
+            let result = chip8.execute(0xF033, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(mem.read_byte(0x05), 1); 
-            assert_eq!(mem.read_byte(0x06), 2); 
-            assert_eq!(mem.read_byte(0x07), 3); 
+            assert_eq!(mem.read_byte(0x05), 1);
+            assert_eq!(mem.read_byte(0x06), 2);
+            assert_eq!(mem.read_byte(0x07), 3);
         }
 
         #[test]
@@ -442,10 +442,10 @@ use super::*;
             chip8.cpu.idx = 0x05;
             chip8.cpu.v[0] = 0x01;
             chip8.cpu.v[1] = 0x02;
-            let result = chip8.execute(0xF155, &mut mem); 
+            let result = chip8.execute(0xF155, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(mem.read_byte(0x05), 0x01); 
-            assert_eq!(mem.read_byte(0x06), 0x02); 
+            assert_eq!(mem.read_byte(0x05), 0x01);
+            assert_eq!(mem.read_byte(0x06), 0x02);
         }
 
         #[test]
@@ -454,9 +454,9 @@ use super::*;
             chip8.cpu.idx = 0x05;
             mem.write_byte(0x05, 0x01);
             mem.write_byte(0x06, 0x02);
-            let result = chip8.execute(0xF165, &mut mem); 
+            let result = chip8.execute(0xF165, &mut mem);
             assert!(result.is_ok());
-            assert_eq!(chip8.cpu.v[0], 0x01); 
-            assert_eq!(chip8.cpu.v[1], 0x02); 
+            assert_eq!(chip8.cpu.v[0], 0x01);
+            assert_eq!(chip8.cpu.v[1], 0x02);
         }
     }

@@ -1,18 +1,13 @@
 use std::error::Error;
 use std::io::{BufReader, Read};
 use std::fs::File;
-use super::{MEMORY_SIZE, PROGRAM_START, errors::Chip8Error};
+use crate::errors::Chip8Error;
 
-pub struct Memory {
-    memory: [u8; MEMORY_SIZE]
-}
+pub const MEMORY_SIZE: usize = 1024 * 4;
+pub const PROGRAM_START: u16 = 0x200;
+const SPRITES_MEMORY: usize = 80;
 
-impl Memory {
-    pub fn new() -> Self {
-        let mut memory = [0; MEMORY_SIZE];
-
-        // Font sprites
-        let sprites = [
+const SPRITES: [u8; SPRITES_MEMORY] = [
             0xf0, 0x90, 0x90, 0x90, 0xf0, // "0"
             0x20, 0x60, 0x20, 0x20, 0x70, // "1"
             0xf0, 0x10, 0xf0, 0x80, 0xf0, // "2"
@@ -29,10 +24,18 @@ impl Memory {
             0xe0, 0x90, 0x90, 0x90, 0xe0, // "D"
             0xf0, 0x80, 0xf0, 0x80, 0xf0, // "E"
             0xf0, 0x80, 0xf0, 0x80, 0x80  // "F"
-        ];
+];
 
-        // Load font sprites into memory - 0x00 to 0x4F
-        for (i, &byte) in sprites.iter().enumerate() {
+pub struct Memory {
+    memory: [u8; MEMORY_SIZE]
+}
+
+impl Memory {
+    pub fn new() -> Self {
+        let mut memory = [0; MEMORY_SIZE];
+
+        // Load font sprites - 0x00 to 0x4F
+        for (i, &byte) in SPRITES.iter().enumerate() {
             memory[i] = byte;
         }
 
@@ -40,12 +43,12 @@ impl Memory {
     }
 
     // Assumes addr is always valid, panics if out of bounds
-    pub fn read_byte(&self, addr: u16) -> u8 {
+    pub fn read_byte(&self, addr: u16) -> u8 { // todo: use Addr here?
         self.memory[addr as usize]
     }
 
     // Same here
-    pub fn write_byte(&mut self, addr: u16, data: u8) {
+    pub fn write_byte(&mut self, addr: u16, data: u8) { // todo: use Addr here?
         self.memory[addr as usize] = data;
     }
 
@@ -58,7 +61,7 @@ impl Memory {
     }
 
     // Loads program from file
-    pub fn load(&mut self, file: &File) -> Result<(), Box<dyn Error>> {
+    pub fn load_from_file(&mut self, file: &File) -> Result<(), Box<dyn Error>> {
         let f = BufReader::new(file);
 
         for (i, byte) in f.bytes().enumerate() {
@@ -69,18 +72,6 @@ impl Memory {
             self.memory[idx] = byte?;
         }
         Ok(())
-    }
-
-    // Loads file from args - 2nd argument
-    pub fn from_args(mut args: impl Iterator<Item = String>) -> Result<Memory, Box<dyn Error>> {
-        match (args.next(), args.next()) {
-            (Some(_), Some(file_path)) => {
-                let mut memory = Memory::new();
-                memory.load(&File::open(file_path)?)?;
-                Ok(memory)
-            },
-            _ => Err(Box::new(Chip8Error::MissingFilePath))
-        }
     }
 }
 
