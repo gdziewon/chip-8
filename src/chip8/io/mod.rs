@@ -12,12 +12,12 @@ use minifb::{Key, Scale};
 use crate::errors::Chip8Error;
 
 pub struct IO {
-    pub(crate) keyboard: Keys,
-    pub(crate) audio: Audio,
-    pub(crate) display: Display
+    keyboard: Keys,
+    audio: Audio,
+    display: Display
 }
 
-impl IO {
+impl IO { // todo: we couild do the stuf with IO<Uinit> IO<Init> for the display, or perhaps just create window when calling new?
     pub fn new() -> Self {
         let keyboard = Keys::get_default();
         let display = Display::new();
@@ -26,7 +26,7 @@ impl IO {
     }
 
     pub fn update(&mut self, st: u8) {
-        self.display.update();
+        self.display.update(); // todo: handle!
 
         if st > 0 {
             self.audio.play();

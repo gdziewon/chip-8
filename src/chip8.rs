@@ -23,7 +23,7 @@ pub const PROGRAM_START: u16 = 0x200;
 const MS_DELAY: u64 = 1; // todo: figure out the CPU frequency
 
 // Display and timers update frequency
-pub const DISPLAY_AND_TIMERS_UPDATE_FREQUENCY: u64 = 1000 / 60; // 60hz
+pub const CPU_FREQ: f64 = 1.0 / 500.0; // 500hz
 
 pub struct Chip8 {
     cpu: CPU,
@@ -48,21 +48,22 @@ impl Chip8 {
         // Open window
         self.io.display_init()?;
 
-        let mut last_update = Instant::now();
+        let tick = Duration::from_secs_f64(CPU_FREQ);
+        let mut next = Instant::now() + tick;
 
         while self.io.display_is_open() {
-            // Execute instruction
-            self.cpu.execute(&mut self.mem, &mut self.io)?;
-
-            // Delay between each instruction for more accurate timing
-            thread::sleep(Duration::from_millis(MS_DELAY));
-
-            // Update timers and display at 60hz
-            if last_update.elapsed() >= Duration::from_millis(DISPLAY_AND_TIMERS_UPDATE_FREQUENCY) {
+            let now = Instant::now();
+            if now >= next {
+                self.cpu.execute(&mut self.mem, &mut self.io)?;
                 self.io.update(self.cpu.sound_timer());
-                last_update = Instant::now();
+                next += tick
+            } else {
+                thread::sleep(next - now);
             }
         }
+
+        self.cpu.shutdown(); // FIXME: when clicking X, CPU stops but the window doesnt close
+
         Ok(())
     }
 

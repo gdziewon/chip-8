@@ -27,7 +27,7 @@ use super::*;
         bindings.insert(0x4, Key::A);
         bindings.insert(0x6, Key::D);
         bindings.insert(0x8, Key::S);
-        chip8.with_bindings(bindings.clone());
+        chip8.set_keyboard_bindings(bindings.clone());
         assert_eq!(chip8.keyboard.get_bindings(), bindings);
     }
 
