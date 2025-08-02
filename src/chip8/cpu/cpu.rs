@@ -1,26 +1,25 @@
 use std::sync::atomic::AtomicU8;
 use std::thread;
 use std::time::Duration;
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 use crate::errors::Chip8Error;
 use crate::chip8::io::IO;
 use super::opcode::{Addr, Nib};
 use super::timer_clock::TimerClock;
+use super::registers::Registers;
 
 use super::opcode::OpCode;
 use crate::chip8::memory::Memory;
 
 pub const PROGRAM_START: u16 = 0x200;
 const STACK_DEPTH: usize = 16;
-const NUM_REGISTERS: usize = 16;
-const FLAG_REGISTER: usize = 0xF;
 const MS_DELAY: u64 = 1;
 const SPRITE_SIZE: u16 = 5;
 
 pub struct CPU {
     // Registers
-    v: [u8; NUM_REGISTERS], // 16 general purpose 8-bit registers
+    v: Registers, // 16 general purpose 8-bit registers
     idx: u16, // 16-bit address register
 
     // Timers - counts down at 60hz to 0
@@ -42,7 +41,7 @@ impl CPU {
         timer_clock.start();
 
         CPU {
-            v: [0x00; NUM_REGISTERS], // todo: this can be its own struct, for Nib indexing
+            v: Registers::new(), // todo: this can be its own struct, for Nib indexing
             idx: 0x0000,
             dt,
             st,
@@ -104,7 +103,7 @@ impl CPU {
     }
 
     pub fn sound_timer(&self) -> u8 {
-        self.st.load(std::sync::atomic::Ordering::Relaxed)
+        self.st.load(Ordering::Relaxed)
     }
 
     fn return_subroutine(&mut self) {
@@ -117,131 +116,134 @@ impl CPU {
     }
 
     fn jump_addr(&mut self, addr: Addr) {
-        self.pc = addr.addr();
+        self.pc = addr.value();
     }
 
     fn call_addr(&mut self, addr: Addr) {
         self.sp += 1;
         self.stack[self.sp as usize] = self.pc;
-        self.pc = addr.addr();
+        self.pc = addr.value();
     }
 
     fn skip_eq_reg_byte(&mut self, vx: Nib, byte: u8) {
-        if self.v[vx.idx()] == byte {
+        if self.v[vx] == byte {
             self.pc += 2;
         }
     }
 
     fn skip_neq_reg_byte(&mut self, vx: Nib, byte: u8) {
-        if self.v[vx.idx()] != byte {
+        if self.v[vx] != byte {
             self.pc += 2;
         }
     }
 
     fn skip_reg_eq_reg(&mut self, vx: Nib, vy: Nib) { // todo: last nibble should be 0 for this one, check decoding
-        if self.v[vx.idx()] == self.v[vy.idx()] {
+        if self.v[vx] == self.v[vy] {
             self.pc += 2;
         }
     }
 
     fn load_reg_byte(&mut self, vx: Nib, byte: u8) {
-        self.v[vx.idx()] = byte;
+        self.v[vx] = byte;
     }
 
     fn add_reg_byte(&mut self, vx: Nib, byte: u8) {
-        self.v[vx.idx()] = self.v[vx.idx()].wrapping_add(byte);
+        self.v[vx] = self.v[vx].wrapping_add(byte);
     }
 
     fn load_reg_reg(&mut self, vx: Nib, vy: Nib) {
-        self.v[vx.idx()] = self.v[vy.idx()];
+        self.v[vx] = self.v[vy];
     }
 
     fn or_reg_reg(&mut self, vx: Nib, vy: Nib) {
-        self.v[vx.idx()] |= self.v[vy.idx()];
+        self.v[vx] |= self.v[vy];
     }
 
     fn and_reg_reg(&mut self, vx: Nib, vy: Nib) {
-        self.v[vx.idx()] &= self.v[vy.idx()];
+        self.v[vx] &= self.v[vy];
     }
 
     fn xor_reg_reg(&mut self, vx: Nib, vy: Nib) {
-        self.v[vx.idx()] ^= self.v[vy.idx()];
+        self.v[vx] ^= self.v[vy];
     }
 
     fn add_reg_reg(&mut self, vx: Nib, vy: Nib) {
-        let (sum, carry) = self.v[vx.idx()].overflowing_add(self.v[vy.idx()]);
-        self.v[FLAG_REGISTER] = carry as u8;
-        self.v[vx.idx()] = sum;
+        let (sum, carry) = self.v[vx].overflowing_add(self.v[vy]);
+        self.v.set_flag(carry as u8);
+        self.v[vx] = sum;
     }
 
     fn sub_reg_reg(&mut self, vx: Nib, vy: Nib) {
-        let (diff, borrow) = self.v[vx.idx()].overflowing_sub(self.v[vy.idx()]);
-        self.v[FLAG_REGISTER] = (!borrow) as u8;
-        self.v[vx.idx()] = diff;
+        let (diff, borrow) = self.v[vx].overflowing_sub(self.v[vy]);
+        self.v.set_flag((!borrow) as u8);
+        self.v[vx] = diff;
     }
 
     fn shr_reg_reg(&mut self, vx: Nib) { // todo! in enum we have vy here also, not needed
-        self.v[FLAG_REGISTER] = self.v[vx.idx()] & 1;
-        self.v[vx.idx()] >>= 1;
+        let underflow = self.v[vx] & 1;
+        self.v.set_flag(underflow);
+        self.v[vx] >>= 1;
     }
 
     fn subn_reg_reg(&mut self, vx: Nib, vy: Nib) {
-        let (diff, borrow) = self.v[vy.idx()].overflowing_sub(self.v[vx.idx()]);
-        self.v[FLAG_REGISTER] = (!borrow) as u8;
-        self.v[vx.idx()] = diff;
+        let (diff, borrow) = self.v[vy].overflowing_sub(self.v[vx]);
+        self.v.set_flag((!borrow) as u8);
+        self.v[vx] = diff;
 }
 
     fn shl_reg_reg(&mut self, vx: Nib) { // todo! in enum we have vy here also, not needed
-        self.v[FLAG_REGISTER] = self.v[vx.idx()] >> 7;
-        self.v[vx.idx()] <<= 1;
+        let overflow = self.v[vx] >> 7;
+        self.v.set_flag(overflow);
+        self.v[vx] <<= 1;
     }
 
     fn skip_neq_reg_reg(&mut self, vx: Nib, vy: Nib) { // todo! last nibble needs to be 0, check decode
-        if self.v[vx.idx()] != self.v[vy.idx()] {
+        if self.v[vx] != self.v[vy] {
             self.pc += 2;
         }
     }
 
     fn load_idx_addr(&mut self, addr: Addr) {
-        self.idx = addr.addr();
+        self.idx = addr.value();
     }
 
     fn jump_v0_addr(&mut self, addr: Addr) {
-        self.pc = addr.addr() + self.v[0] as u16;
+        self.pc = addr.value() + self.v.v0() as u16;
     }
 
     fn random_reg_byte(&mut self, vx: Nib, byte: u8) {
         let rnd: u8 = rand::random();
-        self.v[vx.idx()] = byte & rnd;
+        self.v[vx] = byte & rnd;
     }
 
     fn draw(&mut self, vx: Nib, vy: Nib, height: Nib, mem: &mut Memory, io: &mut IO) {
         // Read sprite from memory
-        let sprite = (0..height.idx())
+        let sprite = (0..height.value())
             .map(|offset| mem.read_byte(self.idx + offset as u16));
 
-        let x = self.v[vx.idx()] as usize;
-        let y = self.v[vy.idx()] as usize;
+        let x = self.v[vx] as usize;
+        let y = self.v[vy] as usize;
 
         // Draw sprite and set collision flag
-        self.v[FLAG_REGISTER] = io.display_draw(x, y, sprite) as u8;
+        let collision = io.display_draw(x, y, sprite);
+        self.v.set_flag(collision as u8); // todo: some methods for flag register?
     }
 
     // Ennn - Keyboard operations
     fn skip_key_pressed(&mut self, vx: Nib, io: &IO) {
-        if io.is_key_down(self.v[vx.idx()]) {
+        if io.is_key_down(self.v[vx]) {
             self.pc += 2;
         }
     }
 
     fn skip_key_not_pressed(&mut self, vx: Nib, io: &IO) {
-        if !io.is_key_down(self.v[vx.idx()]) {
+        if !io.is_key_down(self.v[vx]) {
             self.pc += 2;
         }
     }
 
     fn load_reg_dt(&mut self, vx: Nib) {
-        self.v[vx.idx()] = self.dt.load(std::sync::atomic::Ordering::Relaxed);
+        self.v[vx] = self.dt.load(Ordering::Relaxed);
     }
 
     fn load_reg_key(&mut self, vx: Nib, io: &mut IO) { // todo: gotta refactor that
@@ -250,7 +252,7 @@ impl CPU {
 
             // Check if a key is pressed
             if let Some(key) = io.get_key_press() {
-                self.v[vx.idx()] = key;
+                self.v[vx] = key;
                 break;
             }
 
@@ -265,38 +267,40 @@ impl CPU {
     }
 
     fn load_dt_reg(&mut self, vx: Nib) {
-        self.dt.store(self.v[vx.idx()], std::sync::atomic::Ordering::Relaxed);
+        self.dt.store(self.v[vx], Ordering::Relaxed);
     }
 
     fn load_st_reg(&mut self, vx: Nib) {
-        self.st.store(self.v[vx.idx()], std::sync::atomic::Ordering::Relaxed);
+        self.st.store(self.v[vx], Ordering::Relaxed);
     }
 
     fn add_idx_reg(&mut self, vx: Nib) {
-        self.idx += self.v[vx.idx()] as u16;
+        self.idx += self.v[vx] as u16;
     }
 
     fn load_idx_sprite(&mut self, vx: Nib) {
-        self.idx = self.v[vx.idx()] as u16 * SPRITE_SIZE; // Each sprite is 5 bytes long from 0x00 to 0x4F
+        self.idx = self.v[vx] as u16 * SPRITE_SIZE; // Each sprite is 5 bytes long from 0x00 to 0x4F
     }
 
     fn load_bcd_vx(&mut self, vx: Nib, mem: &mut Memory) {
-        mem.write_byte(self.idx, self.v[vx.idx()] / 100);
-        mem.write_byte(self.idx + 1, (self.v[vx.idx()] % 100) / 10);
-        mem.write_byte(self.idx + 2, self.v[vx.idx()] % 10);
+        mem.write_byte(self.idx, self.v[vx] / 100);
+        mem.write_byte(self.idx + 1, (self.v[vx] % 100) / 10);
+        mem.write_byte(self.idx + 2, self.v[vx] % 10);
     }
 
     fn load_idx_regs(&mut self, vx: Nib, mem: &mut Memory) {
-        for i in 0..=vx.idx() {
-            mem.write_byte(self.idx + i as u16, self.v[i]);
+        for i in 0..=vx.value() {
+            let nib = Nib::from(i);
+            mem.write_byte(self.idx + i as u16, self.v[nib]);
         }
-        self.idx += vx.nib() as u16 + 1;
+        self.idx += vx.value() as u16 + 1;
     }
 
     fn load_regs_idx(&mut self, vx: Nib, mem: &mut Memory) {
-        for i in 0..=vx.idx() {
-            self.v[i] = mem.read_byte(self.idx + i as u16);
+        for i in 0..=vx.value() {
+            let nib = Nib::from(i);
+            self.v[nib] = mem.read_byte(self.idx + i as u16);
         }
-        self.idx += vx.nib() as u16 + 1;
+        self.idx += vx.value() as u16 + 1;
     }
 }

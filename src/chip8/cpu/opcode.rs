@@ -1,29 +1,28 @@
+const ADDR_MASK: u16 = 0x0FFF;
+const NIB_MASK: u8 = 0x0F;
 
-use modular_bitfield::prelude::*;
-
-#[bitfield(bits = 12)]
-pub struct Addr {
-    pub addr: B12
-}
+pub struct Addr(u16);
 
 impl Addr {
-    fn from(val: u16) -> Addr {
-        Addr::new().with_addr(val)
+    pub fn from(val: u16) -> Self { // todo: should I return result here?
+        Self(val & ADDR_MASK)
+    }
+
+    pub fn value(&self) -> u16 {
+        self.0
     }
 }
 
-#[bitfield(bits = 4)]
-pub struct Nib {
-    pub nib: B4
-}
+#[derive(Clone, Copy)]
+pub struct Nib(u8);
 
 impl Nib {
-    fn from(val: u8) -> Nib {
-        Nib::new().with_nib(val)
+    pub fn from(val: u8) -> Self { // todo: should I return result here?
+        Self(val & NIB_MASK)
     }
 
-    pub fn idx(&self) -> usize {
-        self.nib() as usize
+    pub fn value(&self) -> u8 {
+        self.0
     }
 }
 
@@ -44,7 +43,7 @@ pub enum OpCode {
     XorReg(Nib, Nib),     // 8xy3 - XOR Vx, Vy
     AddReg(Nib, Nib),     // 8xy4 - ADD Vx, Vy
     SubReg(Nib, Nib),     // 8xy5 - SUB Vx, Vy
-    ShiftRight(Nib, Nib),     // 8xy6 - SHR Vx {, Vy}
+    ShiftRight(Nib, Nib),     // 8xy6 - SHR Vx {, Vy} // todo: do I want to use these second nibs? if not, remove them
     SubNot(Nib, Nib),    // 8xy7 - SUBN Vx, Vy
     ShiftLeft(Nib, Nib),     // 8xyE - SHL Vx {, Vy}
     SkipNotEqualReg(Nib, Nib),     // 9xy0 - SNE Vx, Vy
@@ -76,7 +75,7 @@ impl OpCode {
         let kk = (code & 0x00ff) as u8;
         let addr = Addr::from(code & 0xFFF);
 
-        return match first_nib.nib() {
+        return match first_nib.value() {
             0x0 => {
                 match code { // todo: do we want these insider matches?
                     0x0000 => NoOp,
@@ -92,7 +91,7 @@ impl OpCode {
             0x5 => SkipEqualReg(x, y),
             0x6 => LoadByte(x, kk),
             0x7 => AddByte(x, kk),
-            0x8 => match n.nib() {
+            0x8 => match n.value() {
                 0x0 => LoadReg(x, y),
                 0x1 => OrReg(x, y),
                 0x2 => AndReg(x, y),

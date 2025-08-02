@@ -19,11 +19,8 @@ use crate::chip8::io::IO; // Audio library
 pub const MEMORY_SIZE: usize = 1024 * 4;
 pub const PROGRAM_START: u16 = 0x200;
 
-// Delay between each instruction execution
-const MS_DELAY: u64 = 1; // todo: figure out the CPU frequency
-
 // Display and timers update frequency
-pub const CPU_FREQ: f64 = 1.0 / 500.0; // 500hz
+pub const CPU_FREQ: f64 = 1.0 / 700.0; // 500hz
 
 pub struct Chip8 {
     cpu: CPU,
