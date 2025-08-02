@@ -3,6 +3,7 @@ use std::thread;
 use std::time::Duration;
 use std::sync::{Arc, atomic::Ordering};
 
+use crate::chip8::cpu::opcode;
 use crate::errors::Chip8Error;
 use crate::chip8::io::IO;
 use super::opcode::{Addr, Nib};
@@ -41,7 +42,7 @@ impl CPU {
         timer_clock.start();
 
         CPU {
-            v: Registers::new(), // todo: this can be its own struct, for Nib indexing
+            v: Registers::new(),
             idx: Addr::new(),
             dt,
             st,
@@ -56,10 +57,15 @@ impl CPU {
         self._timer_clock.shutdown();
     }
 
-    pub fn execute(&mut self, mem: &mut Memory, io: &mut IO) -> Result<(), Chip8Error> { // todo: handle st and dt decrementation, maybe seperate thread?
+    fn fetch(&mut self, mem: &Memory) -> Result<OpCode, Chip8Error> {
         let instruction = mem.get_instruction(self.pc);
-        let opcode = OpCode::decode(instruction);
-        self.pc+=2;
+        self.pc += 2;
+
+        OpCode::decode(instruction)
+    }
+
+    pub fn execute(&mut self, mem: &mut Memory, io: &mut IO) -> Result<(), Chip8Error> {
+        let opcode = self.fetch(mem)?;
 
         match opcode {
             OpCode::NoOp => (),

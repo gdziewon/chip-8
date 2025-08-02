@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::io::{BufReader, Read};
 use std::fs::File;
+use std::process::Output;
 use crate::chip8::cpu::Addr;
 use crate::errors::Chip8Error;
 
@@ -44,13 +45,11 @@ impl Memory {
         Memory { memory }
     }
 
-    // Assumes addr is always valid, panics if out of bounds
-    pub fn read_byte(&self, addr: Addr) -> u8 { // todo: use Addr here?
-        self.memory[addr.value() as usize] // todo -> do we want to implement index/indexmut on memory?
+    pub fn read_byte(&self, addr: Addr) -> u8 {
+        self.memory[addr.value() as usize]
     }
 
-    // Same here
-    pub fn write_byte(&mut self, addr: Addr, data: u8) { // todo: use Addr here?
+    pub fn write_byte(&mut self, addr: Addr, data: u8) {
         self.memory[addr.value() as usize] = data;
     }
 
@@ -60,6 +59,17 @@ impl Memory {
         let low_byte = self.read_byte(addr + 1);
 
         ((high_byte as u16) << 8) | low_byte as u16
+    }
+
+    pub fn load(&mut self, program: impl Iterator<Item = u8>) -> Result<(), Box<dyn Error>> {
+        for (i, byte) in program.enumerate() {
+            let idx = PROGRAM_START as usize + i;
+            if idx >= MEMORY_SIZE {
+                return Err(Box::new(Chip8Error::TooManyLines(i, MEMORY_SIZE)));
+            }
+            self.memory[idx] = byte;
+        }
+        Ok(())
     }
 
     // Loads program from file
