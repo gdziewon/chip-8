@@ -6,7 +6,7 @@ pub mod io;
 mod tests;
 
 pub use memory::Memory;
-use crate::errors::Chip8Error;
+use crate::{chip8::io::Color, errors::Chip8Error};
 use cpu::CPU;
 
 use std::{collections::HashMap, fs::File, thread, time::{Duration, Instant}};
@@ -52,7 +52,15 @@ impl Chip8 {
             let now = Instant::now();
             if now >= next {
                 self.cpu.execute(&mut self.mem, &mut self.io)?;
-                self.io.update(self.cpu.sound_timer());
+
+                self.io.display_update()?;
+
+                if self.cpu.sound_timer() > 0 {
+                    self.io.audio_play();
+                } else {
+                    self.io.audio_pause();
+                }
+
                 next += tick
             } else {
                 thread::sleep(next - now);
@@ -64,7 +72,7 @@ impl Chip8 {
         Ok(())
     }
 
-    pub fn set_colors(&mut self, filled: u32, empty: u32) {
+    pub fn set_colors(&mut self, filled: Color, empty: Color) {
         self.io.display_set_colors(filled, empty);
     }
 

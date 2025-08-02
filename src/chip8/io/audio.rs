@@ -24,4 +24,8 @@ impl Audio {
     pub(super) fn play(&self) {
         self.audio.play();
     }
+
+    pub(super) fn is_playing(&self) -> bool {
+        !self.audio.is_paused()
+    }
 }

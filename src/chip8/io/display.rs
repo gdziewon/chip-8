@@ -19,8 +19,8 @@ impl Display {
         let grid = [[false; DISPLAY_HEIGHT]; DISPLAY_WIDTH];
         let buffer: Vec<u32> = vec![0; DISPLAY_WIDTH * DISPLAY_HEIGHT];
         let colors = Colors {
-            filled: 0xffffff,
-            empty: 0x000000
+            filled: Color::from_u8(0xFF, 0xFF, 0xFF),
+            empty: Color::from_u8(0, 0, 0)
         };
 
         Display { grid, buffer, window: None, colors, scale: DISPLAY_SCALE }
@@ -48,7 +48,7 @@ impl Display {
     pub fn get_key_press(&self, keyboard: &super::Keys) -> Option<u8> {
         self.window.as_ref().unwrap().get_keys_pressed(KeyRepeat::No)
         .iter()
-        .find_map(|&k| keyboard.get_by_key(&k))
+        .find_map(|&k| keyboard.get_chip8_key(&k))
         .copied()
     }
 
@@ -66,7 +66,7 @@ impl Display {
     }
 
     // Set color palette for the display
-    pub(super) fn set_colors(&mut self, filled: u32, empty: u32) {
+    pub(super) fn set_colors(&mut self, filled: Color, empty: Color) {
         self.colors.filled = filled;
         self.colors.empty = empty;
     }
@@ -125,8 +125,8 @@ impl Display {
     fn update_buffer(&mut self) {
         for i in 0..DISPLAY_WIDTH {
             for j in 0..DISPLAY_HEIGHT {
-                let color = if self.grid[i][j] { self.colors.filled } else { self.colors.empty };
-                self.buffer[i + j * DISPLAY_WIDTH] = color;
+                let color = if self.grid[i][j] { &self.colors.filled } else { &self.colors.empty };
+                self.buffer[i + j * DISPLAY_WIDTH] = color.value();
             }
         }
     }
@@ -135,8 +135,23 @@ impl Display {
 }
 
 struct Colors {
-    filled: u32,
-    empty: u32
+    filled: Color,
+    empty: Color
+}
+
+pub struct Color {
+    value: u32,
+}
+
+impl Color {
+    pub fn from_u8(r: u8, g: u8, b: u8) -> Self {
+        let value = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
+        Self { value }
+    }
+
+    fn value(&self) -> u32 {
+        self.value
+    }
 }
 
 #[cfg(test)]

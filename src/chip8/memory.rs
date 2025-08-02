@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::io::{BufReader, Read};
 use std::fs::File;
-use std::process::Output;
+
+
 use crate::chip8::cpu::Addr;
 use crate::errors::Chip8Error;
 

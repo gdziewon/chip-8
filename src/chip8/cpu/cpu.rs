@@ -3,7 +3,6 @@ use std::thread;
 use std::time::Duration;
 use std::sync::{Arc, atomic::Ordering};
 
-use crate::chip8::cpu::opcode;
 use crate::errors::Chip8Error;
 use crate::chip8::io::IO;
 use super::opcode::{Addr, Nib};

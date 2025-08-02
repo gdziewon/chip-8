@@ -5,6 +5,7 @@ mod audio;
 use std::collections::HashMap;
 
 use display::Display;
+pub use display::Color;
 use keys::Keys;
 use audio::Audio;
 use minifb::{Key, Scale};
@@ -19,20 +20,14 @@ pub struct IO {
 
 impl IO { // todo: we couild do the stuf with IO<Uinit> IO<Init> for the display, or perhaps just create window when calling new?
     pub fn new() -> Self {
-        let keyboard = Keys::get_default();
+        let keyboard = Keys::default();
         let display = Display::new();
         let audio = Audio::new();
         IO { keyboard, audio, display }
     }
 
-    pub fn update(&mut self, st: u8) {
-        self.display.update(); // todo: handle!
-
-        if st > 0 {
-            self.audio.play();
-        } else {
-            self.audio.pause();
-        }
+    pub fn display_update(&mut self) -> Result<(), Chip8Error> {
+        self.display.update()
     }
 
     pub fn keyboard_set_bindings(&mut self, bindings: HashMap<u8, Key>) {
@@ -43,7 +38,7 @@ impl IO { // todo: we couild do the stuf with IO<Uinit> IO<Init> for the display
         self.display.set_scale(scale);
     }
 
-    pub fn display_set_colors(&mut self, filled: u32, empty: u32) {
+    pub fn display_set_colors(&mut self, filled: Color, empty: Color) {
         self.display.set_colors(filled, empty);
     }
 
@@ -68,21 +63,21 @@ impl IO { // todo: we couild do the stuf with IO<Uinit> IO<Init> for the display
     }
 
     pub fn is_key_down(&self, key: u8) -> bool {
-        if let Some(key) = self.keyboard.get_by_value(key) {
+        if let Some(key) = self.keyboard.get_minifb_key(key) {
             return self.display.is_key_down(*key)
         }
         return false;
     }
 
-    pub fn display_update(&mut self) -> Result<(), crate::errors::Chip8Error> {
-        self.display.update()
-    }
-
     pub fn audio_play(&self) {
-        self.audio.play();
+        if !self.audio.is_playing() {
+            self.audio.play();
+        }
     }
 
     pub fn audio_pause(&self) {
-        self.audio.pause();
+        if self.audio.is_playing() {
+            self.audio.pause();
+        }
     }
 }

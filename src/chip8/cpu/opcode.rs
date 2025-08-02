@@ -35,11 +35,11 @@ impl AddAssign<u16> for Addr {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Nib(u8);
 
 impl Nib {
-    pub fn from(val: u8) -> Self { // todo: should I return result here?
+    pub const fn from(val: u8) -> Self { // todo: should I return result here?
         Self(val & NIB_MASK)
     }
 
