@@ -20,15 +20,15 @@ const SPRITE_SIZE: u16 = 5;
 pub struct CPU {
     // Registers
     v: Registers, // 16 general purpose 8-bit registers
-    idx: u16, // 16-bit address register
+    idx: Addr, // 12-bit address register
 
     // Timers - counts down at 60hz to 0
     dt: Arc<AtomicU8>, // delay timer
     st: Arc<AtomicU8>, // sound timer
 
-    pc: u16, // Program counter
+    pc: Addr, // Program counter
     sp: u8, // Stack pointer
-    stack: [u16; STACK_DEPTH], // 16 16-bit stack fields
+    stack: [Addr; STACK_DEPTH], // 16 16-bit stack fields
 
     _timer_clock: TimerClock
 }
@@ -42,12 +42,12 @@ impl CPU {
 
         CPU {
             v: Registers::new(), // todo: this can be its own struct, for Nib indexing
-            idx: 0x0000,
+            idx: Addr::new(),
             dt,
             st,
-            pc: PROGRAM_START,
+            pc: Addr::from(PROGRAM_START),
             sp: 0x00,
-            stack: [0x0000; STACK_DEPTH],
+            stack: [Addr::new(); STACK_DEPTH],
             _timer_clock: timer_clock
         }
     }
@@ -116,13 +116,13 @@ impl CPU {
     }
 
     fn jump_addr(&mut self, addr: Addr) {
-        self.pc = addr.value();
+        self.pc = addr;
     }
 
     fn call_addr(&mut self, addr: Addr) {
         self.sp += 1;
         self.stack[self.sp as usize] = self.pc;
-        self.pc = addr.value();
+        self.pc = addr;
     }
 
     fn skip_eq_reg_byte(&mut self, vx: Nib, byte: u8) {
@@ -204,11 +204,11 @@ impl CPU {
     }
 
     fn load_idx_addr(&mut self, addr: Addr) {
-        self.idx = addr.value();
+        self.idx = addr;
     }
 
     fn jump_v0_addr(&mut self, addr: Addr) {
-        self.pc = addr.value() + self.v.v0() as u16;
+        self.pc = addr + self.v.v0().into();
     }
 
     fn random_reg_byte(&mut self, vx: Nib, byte: u8) {
@@ -279,7 +279,7 @@ impl CPU {
     }
 
     fn load_idx_sprite(&mut self, vx: Nib) {
-        self.idx = self.v[vx] as u16 * SPRITE_SIZE; // Each sprite is 5 bytes long from 0x00 to 0x4F
+        self.idx = Addr::from( SPRITE_SIZE * self.v[vx] as u16); // Each sprite is 5 bytes long from 0x00 to 0x4F
     }
 
     fn load_bcd_vx(&mut self, vx: Nib, mem: &mut Memory) {

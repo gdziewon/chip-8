@@ -1,15 +1,36 @@
+use std::ops::{Add, AddAssign};
+
 const ADDR_MASK: u16 = 0x0FFF;
 const NIB_MASK: u8 = 0x0F;
 
+#[derive(Clone, Copy)]
 pub struct Addr(u16);
 
 impl Addr {
+    pub fn new() -> Self {
+        Self::from(0)
+    }
+
     pub fn from(val: u16) -> Self { // todo: should I return result here?
         Self(val & ADDR_MASK)
     }
 
     pub fn value(&self) -> u16 {
         self.0
+    }
+}
+
+impl Add<u16> for Addr {
+    type Output = Addr;
+
+    fn add(self, rhs: u16) -> Self::Output {
+        Self::from(self.0.wrapping_add(rhs as u16))
+    }
+}
+
+impl AddAssign<u16> for Addr {
+    fn add_assign(&mut self, rhs: u16) {
+        self.0 = self.0 + rhs
     }
 }
 
