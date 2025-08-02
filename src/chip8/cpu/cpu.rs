@@ -63,40 +63,40 @@ impl CPU {
 
         match opcode {
             OpCode::NoOp => (),
-            OpCode::ClearScreen => self.cleared_display(io),
+            OpCode::ClearScreen => self.cleared_screen(io),
             OpCode::Return => self.return_subroutine(),
             OpCode::Jump(addr) => self.jump_addr(addr),
             OpCode::Call(addr) => self.call_addr(addr),
-            OpCode::SkipEqualByte(x, byte) => self.skip_eq_reg_byte(x, byte),
-            OpCode::SkipNotEqualByte(x, byte) => self.skip_neq_reg_byte(x, byte),
-            OpCode::SkipEqualReg(x, y) => self.skip_reg_eq_reg(x, y),
-            OpCode::LoadByte(x, byte) => self.load_reg_byte(x, byte),
-            OpCode::AddByte(x, byte) => self.add_reg_byte(x, byte),
-            OpCode::LoadReg(x, y) => self.load_reg_reg(x, y),
-            OpCode::OrReg(x, y) => self.or_reg_reg(x, y),
-            OpCode::AndReg(x, y) => self.and_reg_reg(x, y),
-            OpCode::XorReg(x, y) => self.xor_reg_reg(x, y),
-            OpCode::AddReg(x, y) => self.add_reg_reg(x, y),
-            OpCode::SubReg(x, y) => self.sub_reg_reg(x, y),
-            OpCode::ShiftRight(x, _) => self.shr_reg_reg(x),
-            OpCode::SubNot(x, y) => self.subn_reg_reg(x, y),
-            OpCode::ShiftLeft(x, _) => self.shl_reg_reg(x),
-            OpCode::SkipNotEqualReg(x, y) => self.skip_neq_reg_reg(x, y),
-            OpCode::LoadIndex(addr) => self.load_idx_addr(addr),
-            OpCode::JumpV0(addr) => self.jump_v0_addr(addr),
-            OpCode::RandomByte(x, byte) => self.random_reg_byte(x, byte),
+            OpCode::SkipEqualByte(x, byte) => self.skip_eq_byte(x, byte),
+            OpCode::SkipNotEqualByte(x, byte) => self.skip_neq_byte(x, byte),
+            OpCode::SkipEqualReg(x, y) => self.skip_eq_reg(x, y),
+            OpCode::LoadByte(x, byte) => self.load_byte(x, byte),
+            OpCode::AddByte(x, byte) => self.add_byte(x, byte),
+            OpCode::LoadReg(x, y) => self.load_reg(x, y),
+            OpCode::OrReg(x, y) => self.or_reg(x, y),
+            OpCode::AndReg(x, y) => self.and_reg(x, y),
+            OpCode::XorReg(x, y) => self.xor_reg(x, y),
+            OpCode::AddReg(x, y) => self.add_reg(x, y),
+            OpCode::SubReg(x, y) => self.sub_reg(x, y),
+            OpCode::ShiftRight(x, _) => self.shr_reg(x),
+            OpCode::SubNot(x, y) => self.subn_reg(x, y),
+            OpCode::ShiftLeft(x, _) => self.shl_reg(x),
+            OpCode::SkipNotEqualReg(x, y) => self.skip_neq_reg(x, y),
+            OpCode::LoadIndex(addr) => self.load_idx(addr),
+            OpCode::JumpV0(addr) => self.jump_v0(addr),
+            OpCode::RandomByte(x, byte) => self.random_byte(x, byte),
             OpCode::Draw(x, y, n) => self.draw(x, y, n, mem, io),
             OpCode::SkipKeyPressed(x) => self.skip_key_pressed(x, io),
             OpCode::SkipKeyNotPressed(x) => self.skip_key_not_pressed(x, io),
-            OpCode::LoadDelay(x) => self.load_reg_dt(x),
-            OpCode::WaitKey(x) => self.load_reg_key(x, io),
-            OpCode::SetDelay(x) => self.load_dt_reg(x),
-            OpCode::SetSound(x) => self.load_st_reg(x),
-            OpCode::AddToIndex(x) => self.add_idx_reg(x),
-            OpCode::LoadFont(x) => self.load_idx_sprite(x),
-            OpCode::LoadBCD(x) => self.load_bcd_vx(x, mem),
-            OpCode::StoreRegs(x) => self.load_idx_regs(x,  mem),
-            OpCode::LoadRegs(x) => self.load_regs_idx(x, mem),
+            OpCode::LoadDelay(x) => self.load_delay(x),
+            OpCode::WaitKey(x) => self.wait_key(x, io),
+            OpCode::SetDelay(x) => self.set_delay(x),
+            OpCode::SetSound(x) => self.set_sound(x),
+            OpCode::AddToIndex(x) => self.add_idx(x),
+            OpCode::LoadFont(x) => self.load_sprite(x),
+            OpCode::LoadBCD(x) => self.load_bcd(x, mem),
+            OpCode::StoreRegs(x) => self.store_regs(x,  mem),
+            OpCode::LoadRegs(x) => self.load_regs(x, mem),
         }
 
         Ok(())
@@ -111,7 +111,7 @@ impl CPU {
         self.sp -= 1; // todo -> is this ok?
     }
 
-    fn cleared_display(&mut self, io: &mut IO) {
+    fn cleared_screen(&mut self, io: &mut IO) {
         io.display_clear();
     }
 
@@ -125,93 +125,93 @@ impl CPU {
         self.pc = addr;
     }
 
-    fn skip_eq_reg_byte(&mut self, vx: Nib, byte: u8) {
+    fn skip_eq_byte(&mut self, vx: Nib, byte: u8) {
         if self.v[vx] == byte {
             self.pc += 2;
         }
     }
 
-    fn skip_neq_reg_byte(&mut self, vx: Nib, byte: u8) {
+    fn skip_neq_byte(&mut self, vx: Nib, byte: u8) {
         if self.v[vx] != byte {
             self.pc += 2;
         }
     }
 
-    fn skip_reg_eq_reg(&mut self, vx: Nib, vy: Nib) { // todo: last nibble should be 0 for this one, check decoding
+    fn skip_eq_reg(&mut self, vx: Nib, vy: Nib) { // todo: last nibble should be 0 for this one, check decoding
         if self.v[vx] == self.v[vy] {
             self.pc += 2;
         }
     }
 
-    fn load_reg_byte(&mut self, vx: Nib, byte: u8) {
+    fn load_byte(&mut self, vx: Nib, byte: u8) {
         self.v[vx] = byte;
     }
 
-    fn add_reg_byte(&mut self, vx: Nib, byte: u8) {
+    fn add_byte(&mut self, vx: Nib, byte: u8) {
         self.v[vx] = self.v[vx].wrapping_add(byte);
     }
 
-    fn load_reg_reg(&mut self, vx: Nib, vy: Nib) {
+    fn load_reg(&mut self, vx: Nib, vy: Nib) {
         self.v[vx] = self.v[vy];
     }
 
-    fn or_reg_reg(&mut self, vx: Nib, vy: Nib) {
+    fn or_reg(&mut self, vx: Nib, vy: Nib) {
         self.v[vx] |= self.v[vy];
     }
 
-    fn and_reg_reg(&mut self, vx: Nib, vy: Nib) {
+    fn and_reg(&mut self, vx: Nib, vy: Nib) {
         self.v[vx] &= self.v[vy];
     }
 
-    fn xor_reg_reg(&mut self, vx: Nib, vy: Nib) {
+    fn xor_reg(&mut self, vx: Nib, vy: Nib) {
         self.v[vx] ^= self.v[vy];
     }
 
-    fn add_reg_reg(&mut self, vx: Nib, vy: Nib) {
+    fn add_reg(&mut self, vx: Nib, vy: Nib) {
         let (sum, carry) = self.v[vx].overflowing_add(self.v[vy]);
         self.v.set_flag(carry as u8);
         self.v[vx] = sum;
     }
 
-    fn sub_reg_reg(&mut self, vx: Nib, vy: Nib) {
+    fn sub_reg(&mut self, vx: Nib, vy: Nib) {
         let (diff, borrow) = self.v[vx].overflowing_sub(self.v[vy]);
         self.v.set_flag((!borrow) as u8);
         self.v[vx] = diff;
     }
 
-    fn shr_reg_reg(&mut self, vx: Nib) { // todo! in enum we have vy here also, not needed
+    fn shr_reg(&mut self, vx: Nib) { // todo! in enum we have vy here also, not needed
         let underflow = self.v[vx] & 1;
         self.v.set_flag(underflow);
         self.v[vx] >>= 1;
     }
 
-    fn subn_reg_reg(&mut self, vx: Nib, vy: Nib) {
+    fn subn_reg(&mut self, vx: Nib, vy: Nib) {
         let (diff, borrow) = self.v[vy].overflowing_sub(self.v[vx]);
         self.v.set_flag((!borrow) as u8);
         self.v[vx] = diff;
 }
 
-    fn shl_reg_reg(&mut self, vx: Nib) { // todo! in enum we have vy here also, not needed
+    fn shl_reg(&mut self, vx: Nib) { // todo! in enum we have vy here also, not needed
         let overflow = self.v[vx] >> 7;
         self.v.set_flag(overflow);
         self.v[vx] <<= 1;
     }
 
-    fn skip_neq_reg_reg(&mut self, vx: Nib, vy: Nib) { // todo! last nibble needs to be 0, check decode
+    fn skip_neq_reg(&mut self, vx: Nib, vy: Nib) { // todo! last nibble needs to be 0, check decode
         if self.v[vx] != self.v[vy] {
             self.pc += 2;
         }
     }
 
-    fn load_idx_addr(&mut self, addr: Addr) {
+    fn load_idx(&mut self, addr: Addr) {
         self.idx = addr;
     }
 
-    fn jump_v0_addr(&mut self, addr: Addr) {
+    fn jump_v0(&mut self, addr: Addr) {
         self.pc = addr + self.v.v0().into();
     }
 
-    fn random_reg_byte(&mut self, vx: Nib, byte: u8) {
+    fn random_byte(&mut self, vx: Nib, byte: u8) {
         let rnd: u8 = rand::random();
         self.v[vx] = byte & rnd;
     }
@@ -242,11 +242,11 @@ impl CPU {
         }
     }
 
-    fn load_reg_dt(&mut self, vx: Nib) {
+    fn load_delay(&mut self, vx: Nib) {
         self.v[vx] = self.dt.load(Ordering::Relaxed);
     }
 
-    fn load_reg_key(&mut self, vx: Nib, io: &mut IO) { // todo: gotta refactor that
+    fn wait_key(&mut self, vx: Nib, io: &mut IO) { // todo: gotta refactor that
         loop {
             let _ = io.display_update(); // todo: might return error btw
 
@@ -266,29 +266,29 @@ impl CPU {
         }
     }
 
-    fn load_dt_reg(&mut self, vx: Nib) {
+    fn set_delay(&mut self, vx: Nib) {
         self.dt.store(self.v[vx], Ordering::Relaxed);
     }
 
-    fn load_st_reg(&mut self, vx: Nib) {
+    fn set_sound(&mut self, vx: Nib) {
         self.st.store(self.v[vx], Ordering::Relaxed);
     }
 
-    fn add_idx_reg(&mut self, vx: Nib) {
+    fn add_idx(&mut self, vx: Nib) {
         self.idx += self.v[vx] as u16;
     }
 
-    fn load_idx_sprite(&mut self, vx: Nib) {
+    fn load_sprite(&mut self, vx: Nib) {
         self.idx = Addr::from( SPRITE_SIZE * self.v[vx] as u16); // Each sprite is 5 bytes long from 0x00 to 0x4F
     }
 
-    fn load_bcd_vx(&mut self, vx: Nib, mem: &mut Memory) {
+    fn load_bcd(&mut self, vx: Nib, mem: &mut Memory) {
         mem.write_byte(self.idx, self.v[vx] / 100);
         mem.write_byte(self.idx + 1, (self.v[vx] % 100) / 10);
         mem.write_byte(self.idx + 2, self.v[vx] % 10);
     }
 
-    fn load_idx_regs(&mut self, vx: Nib, mem: &mut Memory) {
+    fn store_regs(&mut self, vx: Nib, mem: &mut Memory) {
         for i in 0..=vx.value() {
             let nib = Nib::from(i);
             mem.write_byte(self.idx + i as u16, self.v[nib]);
@@ -296,7 +296,7 @@ impl CPU {
         self.idx += vx.value() as u16 + 1;
     }
 
-    fn load_regs_idx(&mut self, vx: Nib, mem: &mut Memory) {
+    fn load_regs(&mut self, vx: Nib, mem: &mut Memory) {
         for i in 0..=vx.value() {
             let nib = Nib::from(i);
             self.v[nib] = mem.read_byte(self.idx + i as u16);
