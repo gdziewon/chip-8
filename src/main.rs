@@ -1,7 +1,6 @@
 use chip8::chip8::io::Color;
 use chip8::Chip8;
 use std::fs::File;
-use std::process;
 use clap::Parser;
 use std::path::PathBuf;
 
@@ -17,10 +16,12 @@ fn main() {
 
     let mut chip8 = Chip8::new();
     chip8.load_program(program).unwrap();
-    chip8.set_colors(Color::from_u8(0x80, 0, 0x80), Color::from_u8(0xFF, 0xC0, 0xCB)); // purple and pink
+
+    let purple = Color::from_u8(0x80, 0, 0x80);
+    let pink = Color::from_u8(0xFF, 0xC0, 0xCB);
+    chip8.set_colors(purple, pink);
 
     if let Err(e) = chip8.run() {
         eprintln!("Error while running chip8: {e}");
-        process::exit(1);
     }
 }

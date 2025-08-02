@@ -21,14 +21,6 @@ impl Registers {
     pub fn set_flag(&mut self, val: u8) {
         self.regs[FLAG_REGISTER] = val;
     }
-
-    // fn flag_reg(&self) -> &u8 {
-    //     &self.regs[FLAG_REGISTER]
-    // }
-
-    // fn flag_reg_mut(&mut self) -> &mut u8 {
-    //     &mut self.regs[FLAG_REGISTER]
-    // }
 }
 
 impl Index<Nib> for Registers {

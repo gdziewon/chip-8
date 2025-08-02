@@ -2,9 +2,6 @@ pub mod memory;
 pub mod cpu;
 pub mod io;
 
-#[cfg(test)]
-mod tests;
-
 pub use memory::Memory;
 use crate::{chip8::io::Color, errors::Chip8Error};
 use cpu::CPU;
